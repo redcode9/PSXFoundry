@@ -1,0 +1,43 @@
+name: Registry release
+
+on:
+  push:
+    tags:
+      - "registry-v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install signer
+        run: python -m pip install pycryptodome==3.23.0
+      - name: Build pack
+        env:
+          REGISTRY_PRIVATE_KEY: ${{ secrets.REGISTRY_PRIVATE_KEY }}
+        run: |
+          test -n "$REGISTRY_PRIVATE_KEY"
+          umask 077
+          printf '%s' "$REGISTRY_PRIVATE_KEY" | base64 --decode > "$RUNNER_TEMP/registry.pem"
+          version="${GITHUB_REF_NAME#registry-v}"
+          python tools/build-registry-pack.py \
+            --version "$version" \
+            --private-key "$RUNNER_TEMP/registry.pem" \
+            --output "PSXFoundry-registry-$version.zip"
+          sha256sum "PSXFoundry-registry-$version.zip" > "PSXFoundry-registry-$version.zip.sha256"
+      - name: Publish pack
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="${GITHUB_REF_NAME#registry-v}"
+          gh release create "$GITHUB_REF_NAME" \
+            "PSXFoundry-registry-$version.zip" \
+            "PSXFoundry-registry-$version.zip.sha256" \
+            --title "Registry $version" \
+            --notes "Signed compatibility registry $version."
