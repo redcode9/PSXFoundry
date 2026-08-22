@@ -18,6 +18,13 @@ from psxfoundry.registry import (
 
 
 PSP_TARGETS = {"psp", "adrenaline"}
+WORKFLOW_TARGETS = PSP_TARGETS | {
+    "psio",
+    "ps2",
+    "ps3",
+    "retroarch",
+    "playstation-classic",
+}
 
 
 @dataclass(frozen=True)
@@ -28,7 +35,7 @@ class PlannedPatch:
 
 
 @dataclass(frozen=True)
-class PspDiscPlan:
+class TargetDiscPlan:
     description: DiscDescription
     conversion: ConversionPlan
     output_disc_id: str
@@ -43,10 +50,10 @@ class PspDiscPlan:
 
 
 @dataclass(frozen=True)
-class PspWorkflowPlan:
+class TargetWorkflowPlan:
     target: str
     title: str
-    discs: tuple[PspDiscPlan, ...]
+    discs: tuple[TargetDiscPlan, ...]
     adapter_issues: tuple[AdapterIssue, ...] = ()
 
     @property
@@ -139,9 +146,14 @@ def _combined_registry(resource_root):
 
 
 @lru_cache(maxsize=1)
-def load_psp_registry():
+def load_compatibility_registry():
     """Load native rules and the read-only POP-FE compatibility adapter."""
     return _combined_registry(popfe_runtime.resource_root)
+
+
+def load_psp_registry():
+    """Return the shared compatibility registry for PSP workflows."""
+    return load_compatibility_registry()
 
 
 def _single_action(actions, kind):
@@ -189,7 +201,7 @@ def _disc_plan(description, conversion, fallback_disc_id, resource_root):
     undither = _single_action(actions, "set_undither")
     popsloader = _single_action(actions, "set_popsloader")
     cdda_mode = cdda.get("mode") if cdda is not None else None
-    return PspDiscPlan(
+    return TargetDiscPlan(
         description=description,
         conversion=conversion,
         output_disc_id=output_disc_id,
@@ -212,9 +224,9 @@ def _disc_plan(description, conversion, fallback_disc_id, resource_root):
     )
 
 
-def build_psp_plan(
+def build_target_plan(
     paths,
-    target="psp",
+    target,
     *,
     fallback_disc_ids=(),
     registry=None,
@@ -222,19 +234,19 @@ def build_psp_plan(
     resource_root=None,
     analysis_cache=None,
 ):
-    """Analyze normalized disc paths and plan each disc independently."""
-    if target not in PSP_TARGETS:
-        raise RegistryError(f"unsupported PSP workflow target {target}")
+    """Analyze normalized disc paths and plan each target independently."""
+    if target not in WORKFLOW_TARGETS:
+        raise RegistryError(f"unsupported conversion target {target}")
     paths = tuple(Path(path) for path in paths)
     if not paths:
-        raise RegistryError("a PSP conversion needs at least one disc")
+        raise RegistryError("a conversion needs at least one disc")
     fallback_disc_ids = tuple(fallback_disc_ids)
     if fallback_disc_ids and len(fallback_disc_ids) != len(paths):
         raise RegistryError("fallback disc IDs must match the disc count")
 
     root = Path(resource_root or popfe_runtime.resource_root)
     if registry is None:
-        registry, adapter_issues = load_psp_registry()
+        registry, adapter_issues = load_compatibility_registry()
 
     descriptions = []
     for number, path in enumerate(paths):
@@ -258,12 +270,23 @@ def build_psp_plan(
         (disc.description.title for disc in discs if disc.description.title),
         discs[0].description.source.stem,
     )
-    return PspWorkflowPlan(
+    return TargetWorkflowPlan(
         target=target,
         title=title,
         discs=tuple(discs),
         adapter_issues=tuple(adapter_issues),
     )
+
+
+def build_psp_plan(paths, target="psp", **kwargs):
+    """Build a PSP or Adrenaline plan."""
+    if target not in PSP_TARGETS:
+        raise RegistryError(f"unsupported PSP workflow target {target}")
+    return build_target_plan(paths, target, **kwargs)
+
+
+PspDiscPlan = TargetDiscPlan
+PspWorkflowPlan = TargetWorkflowPlan
 
 
 def read_planned_configs(plan, *, force_ntsc=None, cdda=None):
@@ -287,6 +310,24 @@ def read_planned_configs(plan, *, force_ntsc=None, cdda=None):
             if len(config) > 0x8D:
                 config[0x8D] |= 0x20
         configs.append(bytes(config))
+    return tuple(configs)
+
+
+def read_ps3_configs(plan):
+    """Read PS3 config command bodies from the selected profiles."""
+    if plan.target != "ps3":
+        raise RegistryError("PS3 configs require a PS3 conversion plan")
+    configs = []
+    for disc in plan.discs:
+        if disc.config_path is None:
+            configs.append(None)
+            continue
+        data = disc.config_path.read_bytes()
+        if len(data) < 8 or (len(data) - 8) % 8:
+            raise RegistryError(
+                f"invalid PS3 config command file {disc.config_path}"
+            )
+        configs.append(data[8:])
     return tuple(configs)
 
 

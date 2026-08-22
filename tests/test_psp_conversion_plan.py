@@ -4,8 +4,10 @@ import unittest
 from pathlib import Path
 
 from psxfoundry.psp_workflow import (
+    build_target_plan,
     build_psp_plan,
     expected_decoded_hashes,
+    read_ps3_configs,
     read_planned_configs,
     verify_planned_patch_sources,
 )
@@ -214,6 +216,36 @@ class PspConversionPlanTests(unittest.TestCase):
 
             with self.assertRaisesRegex(ValueError, "changed after analysis"):
                 verify_planned_patch_sources(plan, (disc,))
+
+    def test_reads_ps3_config_commands_without_the_header(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            disc = self.make_disc(root, "disc.bin", 0x47)
+            config = root / "profile.bin"
+            config.write_bytes(b"header00" + b"command0")
+            registry = CompatibilityRegistry(
+                (
+                    rule(
+                        (
+                            CompatibilityAction(
+                                "set_pops_config",
+                                (("path", "profile.bin"), ("sha256", "0" * 64)),
+                            ),
+                        ),
+                        target="ps3",
+                    ),
+                )
+            )
+
+            plan = build_target_plan(
+                (disc,),
+                "ps3",
+                fallback_disc_ids=("SCUS00001",),
+                registry=registry,
+                resource_root=root,
+            )
+
+            self.assertEqual(read_ps3_configs(plan), (b"command0",))
 
 
 if __name__ == "__main__":

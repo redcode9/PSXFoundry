@@ -159,6 +159,16 @@ def adapt_popfe(
                 issues,
             )
 
+        ps3_config = None
+        if "ps3config" in game:
+            ps3_config = _asset_action(
+                "set_pops_config",
+                game["ps3config"],
+                root,
+                disc_id,
+                issues,
+            )
+
         cdda = None
         if game.get("psp-use-cdda"):
             cdda = CompatibilityAction("set_cdda", (("mode", "raw"),))
@@ -184,7 +194,7 @@ def adapt_popfe(
             )
 
         ps3_actions = _ordered(
-            [libcrypt_patch, generic_on_ps3, libcrypt_setting]
+            [libcrypt_patch, generic_on_ps3, libcrypt_setting, ps3_config]
         )
         if ps3_actions:
             rules.append(
@@ -199,7 +209,7 @@ def adapt_popfe(
             )
 
         if libcrypt_setting is not None:
-            retroarch_actions = _ordered([libcrypt_patch, libcrypt_setting])
+            retroarch_actions = _ordered([libcrypt_setting])
             rules.append(
                 _rule(
                     disc_id,
@@ -237,7 +247,12 @@ def adapt_popfe(
                 )
             if not tags:
                 actions = _ordered(
-                    [libcrypt_patch, revision_action, libcrypt_setting]
+                    [
+                        libcrypt_patch,
+                        revision_action,
+                        libcrypt_setting,
+                        ps3_config,
+                    ]
                 )
                 rules.append(
                     _rule(

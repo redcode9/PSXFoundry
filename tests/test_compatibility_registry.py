@@ -175,6 +175,33 @@ class PopfeAdapterTests(unittest.TestCase):
         self.assertEqual(len(rules), 4)
         self.assertEqual({rule.targets for rule in rules}, {("psp", "adrenaline"), ("ps3",)})
 
+    def test_imports_ps3_configs(self):
+        rule = next(
+            rule
+            for rule in self.result.rules
+            if rule.id == "popfe-scus94423-ps3"
+        )
+
+        config = next(
+            action for action in rule.actions if action.kind == "set_pops_config"
+        )
+        self.assertEqual(
+            config.get("path"),
+            "ps3configs/Ape Escape/SCUS-94423.BIN",
+        )
+
+    def test_retroarch_uses_subchannels_without_patching_the_image(self):
+        rule = next(
+            rule
+            for rule in self.result.rules
+            if rule.id == "popfe-sces02834-retroarch"
+        )
+
+        self.assertEqual(
+            [action.kind for action in rule.actions],
+            ["set_libcrypt"],
+        )
+
     def test_reports_missing_upstream_assets(self):
         self.assertTrue(
             any(
