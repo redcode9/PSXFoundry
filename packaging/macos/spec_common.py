@@ -22,6 +22,7 @@ HELPER_NAMES = (
 )
 
 RESOURCE_DIRECTORIES = (
+    "compatibility",
     "libcrypt",
     "ppf",
     "ps3configs",

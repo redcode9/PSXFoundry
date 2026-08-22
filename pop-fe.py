@@ -2836,12 +2836,13 @@ def get_toc_from_cue(cue_file):
     return toc
 
 
-def generate_pbp(dest_file, disc_ids, game_title, icon0, pic0, pic1, cue_files, img_files, aea_files, snd0=None, whole_disk=True, subchannels=[], configs=None, logo=None, no_pstitleimg=False, subdir = './'):
+def generate_pbp(dest_file, disc_ids, game_title, icon0, pic0, pic1, cue_files, img_files, aea_files, snd0=None, whole_disk=True, subchannels=[], configs=None, logo=None, no_pstitleimg=False, subdir = './', compression_level=1):
     print('Create PBP file for', game_title) if verbose else None
 
     SECTLEN = 2352
     p = popstation()
     p.verbose = verbose
+    p.complevel = compression_level
     p.disc_ids = disc_ids
     p.game_title = game_title
     p.subchannels = subchannels
@@ -2896,7 +2897,7 @@ def generate_pbp(dest_file, disc_ids, game_title, icon0, pic0, pic1, cue_files, 
         True
 
     
-def create_psp(dest, disc_ids, real_disc_ids, game_title, icon0, pic0, pic1, cue_files, real_cue_files, img_files, mem_cards, aea_files, subdir = './', snd0=None, no_pstitleimg=False, watermark=False, subchannels=[], manual=None, use_cdda=False, logo=None, no_libcrypt=None, psx_undither=None, force_ntsc=False, cdda=False):
+def create_psp(dest, disc_ids, real_disc_ids, game_title, icon0, pic0, pic1, cue_files, real_cue_files, img_files, mem_cards, aea_files, subdir = './', snd0=None, no_pstitleimg=False, watermark=False, subchannels=[], manual=None, use_cdda=False, logo=None, no_libcrypt=None, psx_undither=None, force_ntsc=False, cdda=False, planned_configs=None, compression_level=1):
     EMPTY_CONFIG = bytes([
         0x70,0x00,0x07,0x06,0x00,0x00,0x06,0x06,0x00,0x00,0x00,0x00,0xFF,0xFF,0xFF,0xFF,
         0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,
@@ -2928,25 +2929,35 @@ def create_psp(dest, disc_ids, real_disc_ids, game_title, icon0, pic0, pic1, cue
     if psx_undither:
         cue_files, img_files = patch_undither(disc_ids, cue_files, img_files, subdir=subdir)
 
-    configs = []
+    if planned_configs is not None:
+        if len(planned_configs) != len(disc_ids):
+            raise ValueError('planned_configs must have one entry per disc')
+        configs = [
+            EMPTY_CONFIG[:] if config is None else bytes(config)
+            for config in planned_configs
+        ]
+    else:
+        configs = []
+        for i in range(len(disc_ids)):
+            configs.append(EMPTY_CONFIG[:])
+            try:
+                os.stat(real_cue_files[i][:-3]+'pspconfig').st_size
+                print('Found an external config ', real_cue_files[i][:-3]+'pspconfig')
+                with open(real_cue_files[i][:-3]+'pspconfig', 'rb') as f:
+                    configs[i] = f.read()
+            except:
+                True
+            disc_id = real_disc_ids[i]
+            if disc_id in games and 'pspconfig' in games[disc_id]:
+                print('Found an external config for', disc_id)
+                config_path = popfe_runtime.resource_path(
+                    games[disc_id]['pspconfig'],
+                    required=True,
+                )
+                with open(config_path, 'rb') as f:
+                    configs[i] = f.read()
+
     for i in range(len(disc_ids)):
-        configs.append(EMPTY_CONFIG[:])
-        try:
-            os.stat(real_cue_files[i][:-3]+'pspconfig').st_size
-            print('Found an external config ', real_cue_files[i][:-3]+'pspconfig')
-            with open(real_cue_files[i][:-3]+'pspconfig', 'rb') as f:
-                configs[i] = f.read()
-        except:
-            True
-        disc_id = real_disc_ids[i]
-        if disc_id in games and 'pspconfig' in games[disc_id]:
-            print('Found an external config for', disc_id)
-            config_path = popfe_runtime.resource_path(
-                games[disc_id]['pspconfig'],
-                required=True,
-            )
-            with open(config_path, 'rb') as f:
-                configs[i] = f.read()
         if force_ntsc == 1:
             print('Force NTSC in config')
             configs[i] = bytearray(configs[i])
@@ -3070,7 +3081,7 @@ def create_psp(dest, disc_ids, real_disc_ids, game_title, icon0, pic0, pic1, cue
     if len(disc_ids) > 1:
         no_pstitleimg = False
 
-    generate_pbp(dest_file, disc_ids, game_title, icon0, pic0, pic1, cue_files, img_files, aea_files, snd0=snd0_data, whole_disk=whole_disk, subchannels=subchannels, configs=configs, logo=logo, no_pstitleimg=no_pstitleimg, subdir=subdir)
+    generate_pbp(dest_file, disc_ids, game_title, icon0, pic0, pic1, cue_files, img_files, aea_files, snd0=snd0_data, whole_disk=whole_disk, subchannels=subchannels, configs=configs, logo=logo, no_pstitleimg=no_pstitleimg, subdir=subdir, compression_level=compression_level)
 
     if manual:
         print('Installing manual as', f + '/DOCUMENT.DAT')
@@ -3100,6 +3111,8 @@ def create_psp(dest, disc_ids, real_disc_ids, game_title, icon0, pic0, pic1, cue
             os.sync()
         except:
             True
+
+    return dest_file
 
 
 def create_psc(dest, disc_ids, game_title, icon0, pic1, cue_files, img_files, watermark=True, subdir = './'):
@@ -4252,7 +4265,7 @@ def create_manual(source, gameid, subdir='./pop-fe-work/', ps3_manual=False):
     return tmpfile
 
 
-def ApplyXDELTA(img, romhack):
+def ApplyXDELTA(img, romhack, strict=False):
     print('Applying XDELTA', romhack)
     _tmp = img + 'tmp'
     try:
@@ -4265,11 +4278,18 @@ def ApplyXDELTA(img, romhack):
             _tmp,
         )
         subprocess.run(command, timeout=30, check=True)
-    except:
+    except Exception as error:
+        try:
+            os.remove(_tmp)
+        except OSError:
+            pass
+        if strict:
+            raise RuntimeError('could not apply Xdelta patch') from error
         print('Could not apply xdelta3 patch. Is xdelta3 installed?')
-        return
+        return False
     os.remove(img)
     os.rename(_tmp, img)
+    return True
 
 
 #
@@ -4326,6 +4346,50 @@ def apply_ppf_fixes(real_disc_ids, cue_files, img_files, md5_sums, subdir, tag=N
             print('Applying', xdelta, 'to', img_files[i])
             ApplyXDELTA(img_files[i], xdelta)
             
+    return cue_files, img_files
+
+
+def apply_planned_patches(cue_files, img_files, patches_by_disc, subdir):
+    """Apply only the patches selected by an exact conversion plan."""
+    if len(patches_by_disc) != len(img_files):
+        raise ValueError('patches_by_disc must have one entry per disc')
+
+    cue_files = list(cue_files)
+    img_files = list(img_files)
+    for idx, patches in enumerate(patches_by_disc):
+        if not patches:
+            continue
+
+        patched_cue = subdir + 'PLAN%02x.cue' % idx
+        patched_image = subdir + 'PLAN%02x.bin' % idx
+        copy_file(img_files[idx], patched_image)
+        temp_files.append(patched_image)
+        with open(cue_files[idx], 'r') as source:
+            lines = source.readlines()
+        if not lines:
+            raise ValueError('cannot patch an empty CUE file')
+        lines[0] = 'FILE "%s" BINARY\n' % os.path.basename(patched_image)
+        with open(patched_cue, 'w') as output:
+            output.writelines(lines)
+        temp_files.append(patched_cue)
+        cue_files[idx] = patched_cue
+        img_files[idx] = patched_image
+
+        for patch in patches:
+            patch_path = str(patch.path)
+            digest = hashlib.sha256()
+            with open(patch_path, 'rb') as handle:
+                for chunk in iter(lambda: handle.read(1024 * 1024), b''):
+                    digest.update(chunk)
+            if digest.hexdigest() != patch.sha256:
+                raise ValueError('compatibility patch hash changed: ' + patch_path)
+            if patch.kind == 'apply_ppf':
+                ApplyPPF(patched_image, patch_path)
+            elif patch.kind == 'apply_xdelta':
+                ApplyXDELTA(patched_image, patch_path, strict=True)
+            else:
+                raise ValueError('unsupported planned patch ' + patch.kind)
+
     return cue_files, img_files
 
 

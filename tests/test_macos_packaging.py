@@ -129,6 +129,7 @@ class MacOSBuildScriptTests(unittest.TestCase):
             with self.subTest(helper=helper):
                 self.assertIn(f'"{helper}"', common)
         for resource in (
+            "compatibility",
             "libcrypt",
             "ppf",
             "ps3configs",

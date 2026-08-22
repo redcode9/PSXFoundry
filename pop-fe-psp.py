@@ -12,10 +12,19 @@ import subprocess
 import tkinter as tk
 import tkinter.ttk as ttk
 import zipfile
+from pathlib import Path
 from tkinter import filedialog, messagebox
 from popfe_gui import install_tk_error_handler
 from popfe_psp_import import FolderImportError, scan_psp_folder
 from popfe_runtime import runtime as popfe_runtime
+from psxfoundry.psp_workflow import (
+    build_psp_plan,
+    execution_decoded_sizes,
+    expected_decoded_hashes,
+    read_planned_configs,
+)
+from psxfoundry.report import render_psp_workflow_report
+from psxfoundry.validation import EbootExpectation, validate_generated_eboot
 
 have_pytube = False
 try:
@@ -27,7 +36,7 @@ except:
 from PIL import Image
 from bchunk import bchunk
 import importlib  
-from gamedb import games, libcrypt, themes
+from gamedb import games, themes
 try:
     import popfe
 except:
@@ -47,6 +56,10 @@ PROJECT_UI = popfe_runtime.resource_path("pop-fe-psp.ui", required=True)
 PREFERENCES_PATH = popfe_runtime.application_preference_path(
     "pop-fe-psp.config"
 )
+TARGET_VALUES = {
+    'PSP': 'psp',
+    'PS Vita / Adrenaline': 'adrenaline',
+}
 
 
 class FinishedDialog(tk.Toplevel):
@@ -95,6 +108,8 @@ class PopFePs3App:
         self.icon0_path = None
         self.snd0_path = None
         self.path_dir = None
+        self.conversion_plan = None
+        self.advanced_visible = False
         
         self.master = master
         self.builder = builder = pygubu.Builder()
@@ -127,10 +142,18 @@ class PopFePs3App:
             'on_pic0_yoffset': self.on_pic0_yoffset,
             'on_psx_undither': self.on_psx_undither,
             'on_ntsc_u_icon0': self.on_ntsc_u_icon0,
+            'on_target_selected': self.on_target_selected,
+            'on_toggle_advanced': self.on_toggle_advanced,
         }
 
         builder.connect_callbacks(callbacks)
         self.builder.get_variable('import_all_discs_variable').set('on')
+        self.builder.get_object('target', self.master).configure(
+            values=tuple(TARGET_VALUES),
+            state='readonly',
+        )
+        self.builder.get_variable('target_variable').set('PSP')
+        self.builder.get_object('frame4', self.master).grid_remove()
         for object_id in ('discs', 'separator5', 'frame1'):
             self.builder.get_object(object_id, self.master).pack_configure(fill='x')
         self.builder.get_object('output_frame', self.master).columnconfigure(
@@ -256,6 +279,8 @@ class PopFePs3App:
         self.builder.get_variable('pic0xoffset_variable').set('')
         self.builder.get_variable('pic0yoffset_variable').set('')
         self.builder.get_variable('import_summary_variable').set('')
+        self.builder.get_variable('plan_summary_variable').set('')
+        self.conversion_plan = None
 
     def update_prefs(self):
         PREFERENCES_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -269,6 +294,7 @@ class PopFePs3App:
             f.write('%s:%s\n' % ('pic0_disabled', self.builder.get_variable('pic0_disabled_variable').get()))
             f.write('%s:%s\n' % ('pic1_disabled', self.builder.get_variable('pic1_disabled_variable').get()))
             f.write('%s:%s\n' % ('snd0_disabled', self.builder.get_variable('snd0_disabled_variable').get()))
+            f.write('%s:%s\n' % ('target', self.builder.get_variable('target_variable').get()))
             f.write('%s:%s\n' % ('dir', self.builder.get_variable('pkgdir_variable').get()))
             if self.path_dir:
                 f.write('%s:%s\n' % ('path', self.path_dir))
@@ -303,6 +329,8 @@ class PopFePs3App:
                 if key == 'snd0_disabled':
                     self.builder.get_variable('snd0_disabled_variable').set(val)
                     self.disable_snd0 = val
+                if key == 'target' and val in TARGET_VALUES:
+                    self.builder.get_variable('target_variable').set(val)
                 if key == 'dir':
                     self.builder.get_variable('pkgdir_variable').set(val)
                     self.pkgdir = val
@@ -446,7 +474,89 @@ class PopFePs3App:
             state='disabled' if loaded >= 5 else 'normal'
         )
 
-    def load_disc(self, source_path, idx, fallback_title=None):
+    def _target(self):
+        selected = self.builder.get_variable('target_variable').get()
+        return TARGET_VALUES.get(selected, 'psp')
+
+    def _refresh_conversion_plan(self):
+        if not self.cue_files:
+            self.conversion_plan = None
+            self.builder.get_variable('plan_summary_variable').set('')
+            return None
+
+        plan = build_psp_plan(
+            self.cue_files,
+            self._target(),
+            fallback_disc_ids=self.real_disc_ids,
+        )
+        self.conversion_plan = plan
+        for idx, disc_id in enumerate(plan.output_disc_ids, start=1):
+            self.builder.get_variable('discid%d_variable' % idx).set(disc_id)
+
+        self.cdda = 'on' if plan.use_cdda else 'off'
+        self.builder.get_variable('cdda_variable').set(self.cdda)
+        self.builder.get_variable('force_ntsc_variable').set(
+            'on' if plan.force_ntsc else 'off'
+        )
+        self.builder.get_variable('psx_undither_variable').set(
+            'on' if plan.undither else 'off'
+        )
+
+        profiles = tuple(
+            dict.fromkeys(
+                disc.conversion.rule_id or 'lossless default'
+                for disc in plan.discs
+            )
+        )
+        corrections = sum(
+            action.kind not in {'preserve_disc', 'set_compression'}
+            for disc in plan.discs
+            for action in disc.conversion.actions
+        )
+        target = 'PSP' if plan.target == 'psp' else 'PS Vita / Adrenaline'
+        summary = '%s  |  %d disc%s  |  %s  |  %d correction%s' % (
+            target,
+            len(plan.discs),
+            '' if len(plan.discs) == 1 else 's',
+            ', '.join(profiles),
+            corrections,
+            '' if corrections == 1 else 's',
+        )
+        if plan.warnings:
+            summary += '  |  %d warning%s' % (
+                len(plan.warnings),
+                '' if len(plan.warnings) == 1 else 's',
+            )
+        self.builder.get_variable('plan_summary_variable').set(summary)
+        return plan
+
+    def on_target_selected(self, event=None):
+        self.update_prefs()
+        if not self.cue_files:
+            return
+        self.master.config(cursor='watch')
+        self.master.update()
+        try:
+            self._refresh_conversion_plan()
+        except Exception as error:
+            messagebox.showerror(
+                'Could not plan conversion', str(error), parent=self.master
+            )
+        finally:
+            self.master.config(cursor='')
+
+    def on_toggle_advanced(self):
+        frame = self.builder.get_object('frame4', self.master)
+        button = self.builder.get_object('advanced_button', self.master)
+        self.advanced_visible = not self.advanced_visible
+        if self.advanced_visible:
+            frame.grid()
+            button.configure(text='Hide advanced overrides')
+        else:
+            frame.grid_remove()
+            button.configure(text='Advanced overrides...')
+
+    def load_disc(self, source_path, idx, fallback_title=None, refresh_plan=True):
         if idx != len(self.cue_files) + 1 or idx > 5:
             raise ValueError('Discs must be loaded in order, up to five.')
 
@@ -513,6 +623,8 @@ class PopFePs3App:
             self.builder.get_object('create_button', self.master).config(state='normal')
 
         self._sync_disc_rows()
+        if refresh_plan:
+            self._refresh_conversion_plan()
         self.update_prefs()
         print('Finished processing disc') if verbose else None
 
@@ -599,7 +711,9 @@ class PopFePs3App:
                 str(source_path),
                 idx,
                 fallback_title=result.fallback_title if idx == 1 else None,
+                refresh_plan=False,
             )
+        self._refresh_conversion_plan()
         self._set_folder_import_summary(result)
         self.update_prefs()
         return result
@@ -827,81 +941,179 @@ class PopFePs3App:
            
         self.master.config(cursor='')
 
-    def on_create_eboot(self):        
-        pkgdir = self.builder.get_variable('pkgdir_variable').get()
-        disc_id = self.real_disc_ids[0]
-        title = self.builder.get_variable('title_variable').get()
-        print('Creating EBOOT')
-        print('DISC', disc_id)
-        print('TITLE', title)
-        disc_ids = []
-        for idx in range(len(self.cue_files)):
-            d = self.builder.get_variable('discid%d_variable' % (idx + 1)).get()
-            disc_ids.append(d)
-        resolution = 1
-        subchannels = []
-        for idx in range(len(self.cue_files)):
-            if self.real_disc_ids[idx] in libcrypt:
-                subchannels.append(popfe.generate_subchannels(libcrypt[self.real_disc_ids[idx]]['magic_word']))
-            else:
-                subchannels.append(None)
-
-        if disc_id[:3] == 'SLE' or disc_id[:3] == 'SCE':
-            print('SLES/SCES PAL game. Default resolution set to 2 (640x512)') if verbose else None
-            resolution = 2
+    def on_create_eboot(self):
+        if not self.cue_files:
+            return
 
         self.master.config(cursor='watch')
         self.master.update()
+        try:
+            plan = self.conversion_plan or self._refresh_conversion_plan()
+            pkgdir = self.builder.get_variable('pkgdir_variable').get()
+            title = self.builder.get_variable('title_variable').get()
+            disc_ids = tuple(
+                self.builder.get_variable('discid%d_variable' % (idx + 1)).get()
+                for idx in range(len(self.cue_files))
+            )
+            print('Creating EBOOT')
+            print('DISC', disc_ids[0])
+            print('TITLE', title)
 
-        snd0 = self.builder.get_variable('snd0_variable').get()
-        if snd0[:24] == 'https://www.youtube.com/':
-            snd0 = popfe.get_snd0_from_link(snd0, subdir=self.subdir)
-            if snd0:
-                temp_files.append(snd0)
+            subchannels = tuple(
+                popfe.generate_subchannels(disc.libcrypt_magic_word)
+                if disc.libcrypt_magic_word is not None
+                else None
+                for disc in plan.discs
+            )
 
-        manual = self.builder.get_variable('manual_variable').get()
-        if manual and len(manual) and manual != 'None':
-            manual = popfe.create_manual(manual, self.disc_ids[0], subdir=self.subdir)
-        else:
-            manual = None
+            snd0 = self.builder.get_variable('snd0_variable').get()
+            if snd0[:24] == 'https://www.youtube.com/':
+                snd0 = popfe.get_snd0_from_link(snd0, subdir=self.subdir)
+                if snd0:
+                    temp_files.append(snd0)
 
-        if self.pkgdir:
-            ebootdir = self.pkgdir
-        elif popfe_runtime.is_macos:
-            ebootdir = str(popfe_runtime.home)
-        else:
-            ebootdir = '.'
+            manual = self.builder.get_variable('manual_variable').get()
+            if manual and manual != 'None':
+                manual = popfe.create_manual(
+                    manual, self.disc_ids[0], subdir=self.subdir
+                )
+            else:
+                manual = None
 
-        #
-        # Apply all PPF fixes we might need
-        #
-        self.cue_files, self.img_files = popfe.apply_ppf_fixes(self.real_disc_ids, self.cue_files, self.img_files, self.md5_sums, self.subdir, tag="psp")
+            if pkgdir:
+                ebootdir = pkgdir
+            elif popfe_runtime.is_macos:
+                ebootdir = str(popfe_runtime.home)
+            else:
+                ebootdir = '.'
 
-        aea_files, extra_data_tracks = popfe.generate_aea_files(self.cue_files, self.img_files, self.subdir)
-        if extra_data_tracks:
-            self.cdda = 'on'
+            working_cues, working_images = popfe.apply_planned_patches(
+                self.cue_files,
+                self.img_files,
+                tuple(disc.patches for disc in plan.discs),
+                self.subdir,
+            )
 
-        logo = None
-        if self.builder.get_variable('logo_variable').get():
-            logo = Image.open(self.builder.get_variable('logo_variable').get())
+            undither = (
+                self.builder.get_variable('psx_undither_variable').get() == 'on'
+            )
+            ntsc = self.builder.get_variable('force_ntsc_variable').get() == 'on'
+            cdda = self.builder.get_variable('cdda_variable').get() == 'on'
+            if undither:
+                working_cues, working_images = popfe.patch_undither(
+                    self.real_disc_ids,
+                    working_cues,
+                    working_images,
+                    subdir=self.subdir,
+                )
 
-        undither = self.builder.get_variable('psx_undither_variable').get() == 'on'
-        ntsc     = self.builder.get_variable('force_ntsc_variable').get() == 'on'
-        cdda     = self.cdda == 'on'
+            aea_files, _ = popfe.generate_aea_files(
+                working_cues, working_images, self.subdir
+            )
+            planned_configs = read_planned_configs(
+                plan, force_ntsc=False, cdda=False
+            )
+            expected_configs = read_planned_configs(
+                plan, force_ntsc=ntsc, cdda=cdda
+            )
+            expected_sizes = execution_decoded_sizes(
+                plan, use_cdda=cdda
+            )
+            expected_hashes = expected_decoded_hashes(
+                plan, working_images, use_cdda=cdda
+            )
+            expected_tocs = tuple(
+                bytes(popfe.get_toc_from_cue(cue)).ljust(1020, b'\x00')
+                for cue in working_cues
+            )
 
-        popfe.create_psp(ebootdir, disc_ids, self.real_disc_ids, title,
-                         self.icon0,
-                         self.pic0 if self.pic0_disabled =='off' else None,
-                         self.pic1 if self.pic1_disabled =='off' else None,
-                         self.cue_files, self.real_cue_files, self.img_files, [],
-                         aea_files, subdir=self.subdir, snd0=snd0,
-                         no_pstitleimg=True if self.nopstitleimg=='on' else False,
-                         watermark=True if self.watermark=='on' else False,
-                         subchannels=subchannels, manual=manual,
-                         use_cdda=True if self.cdda=='on' else False,
-                         logo=self.pic1 if self.pic1aslogo=='on' else logo,
-                         psx_undither=undither, force_ntsc=ntsc, cdda=cdda)
-        self.master.config(cursor='')
+            logo = None
+            logo_path = self.builder.get_variable('logo_variable').get()
+            if logo_path:
+                logo = Image.open(logo_path)
+
+            output_path = popfe.create_psp(
+                ebootdir,
+                disc_ids,
+                self.real_disc_ids,
+                title,
+                self.icon0,
+                self.pic0 if self.pic0_disabled == 'off' else None,
+                self.pic1 if self.pic1_disabled == 'off' else None,
+                working_cues,
+                self.real_cue_files,
+                working_images,
+                [],
+                aea_files,
+                subdir=self.subdir,
+                snd0=snd0,
+                no_pstitleimg=self.nopstitleimg == 'on',
+                watermark=self.watermark == 'on',
+                subchannels=subchannels,
+                manual=manual,
+                use_cdda=cdda,
+                logo=self.pic1 if self.pic1aslogo == 'on' else logo,
+                no_libcrypt=True,
+                psx_undither=False,
+                force_ntsc=ntsc,
+                cdda=cdda,
+                planned_configs=planned_configs,
+                compression_level=plan.compression_level,
+            )
+
+            output_path = Path(output_path)
+            report_path = output_path.with_name('PSXFoundry-report.txt')
+            validation = validate_generated_eboot(
+                output_path,
+                EbootExpectation(
+                    disc_ids=disc_ids,
+                    decoded_sizes=expected_sizes,
+                    decoded_sha256=expected_hashes,
+                    tocs=expected_tocs,
+                    configs=expected_configs,
+                    subchannel_records=tuple(
+                        len(data) // 12 if data is not None else 0
+                        for data in subchannels
+                    ),
+                ),
+                report_path=report_path,
+            )
+            report = render_psp_workflow_report(plan)
+            override_lines = []
+            if disc_ids != plan.output_disc_ids:
+                override_lines.append('- Disc IDs: ' + ', '.join(disc_ids))
+            if cdda != plan.use_cdda:
+                override_lines.append(
+                    f'- CD audio: {"raw" if cdda else "ATRAC3"}'
+                )
+            if ntsc != plan.force_ntsc:
+                override_lines.append(
+                    f'- Force NTSC: {"yes" if ntsc else "no"}'
+                )
+            if undither != plan.undither:
+                override_lines.append(
+                    f'- Undither: {"yes" if undither else "no"}'
+                )
+            if self.nopstitleimg == 'on':
+                override_lines.append('- PSTITLEIMG: disabled')
+            overrides = 'Overrides:\n' + '\n'.join(
+                override_lines or ['- None']
+            ) + '\n'
+            report_path.write_text(
+                report + overrides + validation.to_text(),
+                encoding='utf-8',
+            )
+            if not validation.ok:
+                raise RuntimeError(
+                    'EBOOT validation failed. See ' + str(report_path)
+                )
+        except Exception as error:
+            messagebox.showerror(
+                'Could not create EBOOT', str(error), parent=self.master
+            )
+            return
+        finally:
+            self.master.config(cursor='')
 
         d = FinishedDialog(self.master)
         self.master.wait_window(d)

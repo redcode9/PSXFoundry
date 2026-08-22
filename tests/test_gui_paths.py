@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 from popfe_gui import write_exception_log
@@ -63,6 +64,32 @@ class GuiPathTests(unittest.TestCase):
         self.assertIn("import_all_discs_variable", ui)
         self.assertIn("def import_folder(", source)
         self.assertIn("def load_disc(", source)
+
+    def test_psp_gui_uses_automatic_planning_and_validation(self):
+        source = (REPOSITORY_ROOT / "pop-fe-psp.py").read_text(encoding="utf-8")
+        for marker in (
+            "build_psp_plan",
+            "apply_planned_patches",
+            "validate_generated_eboot",
+            "render_psp_workflow_report",
+            "no_libcrypt=True",
+        ):
+            with self.subTest(marker=marker):
+                self.assertIn(marker, source)
+        self.assertNotIn("popfe.apply_ppf_fixes", source)
+
+    def test_psp_gui_keeps_compatibility_overrides_collapsed(self):
+        ui = ET.parse(REPOSITORY_ROOT / "pop-fe-psp.ui")
+        object_ids = {
+            element.attrib.get("id")
+            for element in ui.iter("object")
+        }
+        self.assertTrue(
+            {"target", "plan_summary", "advanced_button", "frame4"}
+            <= object_ids
+        )
+        source = (REPOSITORY_ROOT / "pop-fe-psp.py").read_text(encoding="utf-8")
+        self.assertIn("get_object('frame4', self.master).grid_remove()", source)
 
 
 if __name__ == "__main__":
