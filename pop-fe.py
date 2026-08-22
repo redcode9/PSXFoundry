@@ -75,7 +75,7 @@ except:
     True
 from cue import parse_ccd, parse_cue, ccd2cue, write_cue
 from popstation import popstation, GenerateSFO
-from psxfoundry.psp import track_end_offset, whole_disc_modes
+from psxfoundry.psp import lead_out_msf, track_end_offset, whole_disc_modes
 from ppf import ApplyPPF
 from riff import copy_riff, create_riff, parse_riff
 try:
@@ -2788,23 +2788,7 @@ def get_toc_from_cue(cue_file):
         if ss > num_sectors:
             num_sectors = ss
 
-    f = num_sectors % 75
-    num_sectors = int(num_sectors / 75)
-    s = num_sectors % 60
-    num_sectors = int(num_sectors / 60)
-    m = num_sectors
-    
-    # lead-out is the next frame
-    f = f + 1
-    if f == 75:
-        s = s + 1
-        f = 0
-    if s == 60:
-        m = m + 1
-        s = 0
-    toc[27] = bcd(m)
-    toc[28] = bcd(s)
-    toc[29] = bcd(f)
+    toc[27:30] = bytes(lead_out_msf(num_sectors))
 
     for t in cue['TRACKS']:
         buf = bytearray(10)

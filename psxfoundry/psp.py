@@ -1,6 +1,22 @@
 """PSP conversion decisions."""
 
 
+def _bcd(value):
+    return value % 10 + 16 * ((value // 10) % 10)
+
+
+def lead_out_msf(sector_count, pregap_sectors=150):
+    """Return the BCD lead-out position for a raw disc image."""
+    if sector_count < 0 or pregap_sectors < 0:
+        raise ValueError("sector counts must not be negative")
+    position = sector_count + pregap_sectors
+    minute, remainder = divmod(position, 60 * 75)
+    second, frame = divmod(remainder, 75)
+    if minute > 99:
+        raise ValueError("lead-out exceeds two-digit BCD minutes")
+    return _bcd(minute), _bcd(second), _bcd(frame)
+
+
 def track_end_offset(track, sector_length=2352):
     """Return the byte offset immediately after a track's final sector."""
     indexes = track.get("INDEX", {})

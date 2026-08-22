@@ -6,7 +6,7 @@ import zlib
 from pathlib import Path
 
 from popstation import popstation
-from psxfoundry.psp import track_end_offset, whole_disc_modes
+from psxfoundry.psp import lead_out_msf, track_end_offset, whole_disc_modes
 
 
 BLOCK_SIZE = 0x9300
@@ -53,6 +53,15 @@ class TrackEndOffsetTests(unittest.TestCase):
     def test_requires_an_index(self):
         with self.assertRaisesRegex(ValueError, "track has no indexes"):
             track_end_offset({"INDEX": {}})
+
+
+class LeadOutTests(unittest.TestCase):
+    def test_includes_the_standard_psx_pregap(self):
+        self.assertEqual(lead_out_msf(83904), (0x18, 0x40, 0x54))
+
+    def test_rejects_negative_sector_count(self):
+        with self.assertRaisesRegex(ValueError, "must not be negative"):
+            lead_out_msf(-1)
 
 
 class PopstationDiscIntegrityTests(unittest.TestCase):
