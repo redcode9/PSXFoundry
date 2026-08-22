@@ -6,6 +6,12 @@ from pathlib import Path
 from psxfoundry.disc import analyze_disc
 from psxfoundry.planner import plan_conversion
 from psxfoundry.registry import CompatibilityRegistry, load_registry
+from psxfoundry.registry import (
+    CompatibilityAction,
+    CompatibilityRule,
+    RuleMatch,
+    RuleSource,
+)
 from psxfoundry.report import render_plan_report
 
 
@@ -84,6 +90,37 @@ class CompatibilityPlannerTests(unittest.TestCase):
         self.assertNotIn(
             "apply_ppf",
             [action.kind for action in plan.actions],
+        )
+
+    def test_serial_fallback_does_not_apply_revision_sensitive_patch(self):
+        rule = CompatibilityRule(
+            id="serial-fallback",
+            title="Crash Bash",
+            status="reported",
+            match=RuleMatch(disc_ids=("SCES02834",)),
+            targets=("psp",),
+            actions=(
+                CompatibilityAction(
+                    "apply_ppf",
+                    (("path", "fix.ppf"), ("sha256", "0" * 64)),
+                ),
+                CompatibilityAction("set_libcrypt", (("magic_word", 59176),)),
+            ),
+            sources=(RuleSource("Test", "https://example.com"),),
+            credits=("Test",),
+            tests=(),
+        )
+
+        plan = plan_conversion(
+            (self.crash_bash_description(),),
+            "psp",
+            CompatibilityRegistry((rule,)),
+        )
+
+        self.assertNotIn("apply_ppf", [action.kind for action in plan.actions])
+        self.assertIn("set_libcrypt", [action.kind for action in plan.actions])
+        self.assertTrue(
+            any("exact source hash" in warning for warning in plan.warnings)
         )
 
     def test_report_contains_profile_actions_and_unverified_state(self):

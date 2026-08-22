@@ -97,7 +97,28 @@ def plan_conversion(discs, target, registry):
     elif rule.status != "verified":
         warnings.append(f"Compatibility rule status is {rule.status}")
 
-    actions = _merge_actions(rule.actions if rule else (), discs, target)
+    rule_actions = rule.actions if rule else ()
+    if rule is not None and not (rule.match.sha256 or rule.match.md5):
+        skipped = tuple(
+            action.kind
+            for action in rule_actions
+            if action.kind in {"apply_ppf", "apply_xdelta"}
+        )
+        if skipped:
+            rule_actions = tuple(
+                action
+                for action in rule_actions
+                if action.kind not in {"apply_ppf", "apply_xdelta"}
+            )
+            warnings.append(
+                "Skipped revision-sensitive patches without an exact source hash"
+            )
+            assumptions.append(
+                "A matching source hash is required before applying "
+                + ", ".join(skipped)
+            )
+
+    actions = _merge_actions(rule_actions, discs, target)
     expected_sizes = tuple(_decoded_size(disc, actions) for disc in discs if disc.complete)
     if len(expected_sizes) != len(discs):
         expected_sizes = ()
