@@ -3329,6 +3329,7 @@ class popstation(object):
         fh.write(self._logo)
         print('Writing STARTDAT footer') if self._verbose else None
         fh.write(_startdatfooter)
+        fh.close()
                 
         print('EBOOT.PBP Created') if self._verbose else None
 
