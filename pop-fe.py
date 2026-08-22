@@ -75,6 +75,7 @@ except:
     True
 from cue import parse_ccd, parse_cue, ccd2cue, write_cue
 from popstation import popstation, GenerateSFO
+from psxfoundry.psp import track_end_offset, whole_disc_modes
 from ppf import ApplyPPF
 from riff import copy_riff, create_riff, parse_riff
 try:
@@ -2876,6 +2877,13 @@ def generate_pbp(dest_file, disc_ids, game_title, icon0, pic0, pic1, cue_files, 
         p.aea = aea_files
     if snd0:
         p.snd0 = snd0
+    if isinstance(whole_disk, (list, tuple)):
+        whole_discs = list(whole_disk)
+        if len(whole_discs) != len(img_files):
+            raise ValueError('whole_disk must have one entry per disc')
+    else:
+        whole_discs = [bool(whole_disk)] * len(img_files)
+
     for i in range(len(img_files)):
         f = img_files[i]
         print('Need to create a TOC') if verbose else None
@@ -2884,13 +2892,16 @@ def generate_pbp(dest_file, disc_ids, game_title, icon0, pic0, pic1, cue_files, 
         print('Add image', f) if verbose else None
         p.add_img((f, toc))
         
-        if not whole_disk:
+        track0_size = None
+        if not whole_discs[i]:
             bc = bchunk()
             bc.towav = True
             bc.open(cue_files[i])
             # store how big the data track is
-            p.add_track0_size(bc.tracks[1]['INDEX'][1]['STOPSECT'] * SECTLEN)
-            p.striptracks = True
+            track0_size = track_end_offset(bc.tracks[1], SECTLEN)
+        p.add_track0_size(track0_size)
+
+    p.striptracks = not all(whole_discs)
 
     p.eboot = dest_file
     print('Create PBP file at', p.eboot)
@@ -3069,10 +3080,9 @@ def create_psp(dest, disc_ids, real_disc_ids, game_title, icon0, pic0, pic1, cue
                 snd0_data = i.read()
 
     dest_file = f + '/EBOOT.PBP'
-    whole_disk=False
+    whole_disk = whole_disc_modes(len(img_files), aea_files, use_cdda=use_cdda)
     if use_cdda:
         aea_files = []
-        whole_disk = True
     if len(disc_ids) > 1:
         no_pstitleimg = False
 

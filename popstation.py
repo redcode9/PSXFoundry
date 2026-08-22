@@ -2788,8 +2788,10 @@ class popstation(object):
         with open(img_toc[0], 'rb') as f:
             f.seek(0, 2)
             isosize = f.tell()
-        if self._striptracks and self._track0_size:
-            isosize = self._track0_size[disc_num]
+        if self._striptracks and disc_num < len(self._track0_size):
+            track0_size = self._track0_size[disc_num]
+            if track0_size is not None:
+                isosize = track0_size
         if isosize % 0x9300:
             isosize = isosize + (0x9300 - (isosize%0x9300))
 
@@ -2909,6 +2911,7 @@ class popstation(object):
                 offset = offset + len(c)
             indexes = indexes + idx
             i = i + 1
+        fi.close()
 
         # insert the aa3 blobs
         if disc_num < len(self._aea):
