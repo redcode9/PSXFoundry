@@ -7,6 +7,7 @@ from psxfoundry.psp_workflow import (
     build_psp_plan,
     expected_decoded_hashes,
     read_planned_configs,
+    verify_planned_patch_sources,
 )
 from psxfoundry.report import render_psp_workflow_report
 from psxfoundry.registry import (
@@ -173,6 +174,46 @@ class PspConversionPlanTests(unittest.TestCase):
             report = render_psp_workflow_report(plan)
             self.assertIn("Target: adrenaline", report)
             self.assertIn("Profile 1: test-adrenaline-scus00001", report)
+
+    def test_rechecks_a_source_before_applying_an_exact_patch(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            disc = self.make_disc(root, "disc.bin", 0x45)
+            patch = root / "fix.ppf"
+            patch.write_bytes(b"patch")
+            registry = CompatibilityRegistry(
+                (
+                    CompatibilityRule(
+                        id="exact-patch",
+                        title="Test game",
+                        status="reported",
+                        match=RuleMatch(
+                            disc_ids=("SCUS00001",),
+                            sha256=(hashlib.sha256(disc.read_bytes()).hexdigest(),),
+                        ),
+                        targets=("psp",),
+                        actions=(
+                            CompatibilityAction(
+                                "apply_ppf",
+                                (("path", "fix.ppf"), ("sha256", "0" * 64)),
+                            ),
+                        ),
+                        sources=(RuleSource("Test", "https://example.com"),),
+                        credits=("Test",),
+                        tests=(),
+                    ),
+                )
+            )
+            plan = build_psp_plan(
+                (disc,),
+                fallback_disc_ids=("SCUS00001",),
+                registry=registry,
+                resource_root=root,
+            )
+            disc.write_bytes(bytes([0x46]) * SECTOR_SIZE * 16)
+
+            with self.assertRaisesRegex(ValueError, "changed after analysis"):
+                verify_planned_patch_sources(plan, (disc,))
 
 
 if __name__ == "__main__":

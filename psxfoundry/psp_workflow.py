@@ -220,6 +220,7 @@ def build_psp_plan(
     registry=None,
     adapter_issues=(),
     resource_root=None,
+    analysis_cache=None,
 ):
     """Analyze normalized disc paths and plan each disc independently."""
     if target not in PSP_TARGETS:
@@ -237,7 +238,11 @@ def build_psp_plan(
 
     descriptions = []
     for number, path in enumerate(paths):
-        description = analyze_disc(path)
+        description = (
+            analysis_cache.analyze(path, analyze_disc)
+            if analysis_cache is not None
+            else analyze_disc(path)
+        )
         fallback = fallback_disc_ids[number] if fallback_disc_ids else None
         if description.disc_id is None and fallback:
             description = replace(description, disc_id=fallback)
@@ -283,6 +288,24 @@ def read_planned_configs(plan, *, force_ntsc=None, cdda=None):
                 config[0x8D] |= 0x20
         configs.append(bytes(config))
     return tuple(configs)
+
+
+def verify_planned_patch_sources(plan, image_paths):
+    """Recheck exact source hashes immediately before a planned patch."""
+    image_paths = tuple(Path(path) for path in image_paths)
+    if len(image_paths) != len(plan.discs):
+        raise ValueError("image paths must match the planned disc count")
+    for disc, image_path in zip(plan.discs, image_paths):
+        if not disc.patches:
+            continue
+        digest = hashlib.sha256()
+        with image_path.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(chunk)
+        if digest.hexdigest() != disc.description.sha256:
+            raise ValueError(
+                f"disc changed after analysis; refusing planned patch: {image_path}"
+            )
 
 
 def _decoded_source_size(disc, use_cdda):

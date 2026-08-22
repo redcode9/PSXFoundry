@@ -17,11 +17,13 @@ from tkinter import filedialog, messagebox
 from popfe_gui import install_tk_error_handler
 from popfe_psp_import import FolderImportError, scan_psp_folder
 from popfe_runtime import runtime as popfe_runtime
+from psxfoundry.cache import AnalysisCache
 from psxfoundry.psp_workflow import (
     build_psp_plan,
     execution_decoded_sizes,
     expected_decoded_hashes,
     read_planned_configs,
+    verify_planned_patch_sources,
 )
 from psxfoundry.report import render_psp_workflow_report
 from psxfoundry.validation import EbootExpectation, validate_generated_eboot
@@ -110,6 +112,9 @@ class PopFePs3App:
         self.path_dir = None
         self.conversion_plan = None
         self.advanced_visible = False
+        self.analysis_cache = AnalysisCache(
+            popfe_runtime.cache_dir / 'psxfoundry' / 'analysis'
+        )
         
         self.master = master
         self.builder = builder = pygubu.Builder()
@@ -488,6 +493,7 @@ class PopFePs3App:
             self.cue_files,
             self._target(),
             fallback_disc_ids=self.real_disc_ids,
+            analysis_cache=self.analysis_cache,
         )
         self.conversion_plan = plan
         for idx, disc_id in enumerate(plan.output_disc_ids, start=1):
@@ -987,6 +993,7 @@ class PopFePs3App:
             else:
                 ebootdir = '.'
 
+            verify_planned_patch_sources(plan, self.img_files)
             working_cues, working_images = popfe.apply_planned_patches(
                 self.cue_files,
                 self.img_files,
