@@ -1,0 +1,204 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://psxfoundry.org/schema/compatibility-1.json",
+  "title": "PSXFoundry compatibility catalog",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "catalog", "rules"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "catalog": {"type": "string", "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"},
+    "rules": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/rule"}
+    }
+  },
+  "$defs": {
+    "hash256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "hash128": {"type": "string", "pattern": "^[0-9a-f]{32}$"},
+    "target": {
+      "enum": ["psp", "adrenaline", "psio", "ps2", "ps3", "retroarch", "playstation-classic"]
+    },
+    "match": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "disc_ids": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"type": "string", "pattern": "^[A-Z0-9]{4,16}$"}
+        },
+        "sha256": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"$ref": "#/$defs/hash256"}
+        },
+        "md5": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"$ref": "#/$defs/hash128"}
+        },
+        "region": {"enum": ["pal", "ntsc-u", "ntsc-j"]},
+        "track_layout_sha256": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"$ref": "#/$defs/hash256"}
+        },
+        "sector_counts": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"type": "integer", "minimum": 1}
+        }
+      },
+      "anyOf": [
+        {"required": ["disc_ids"]},
+        {"required": ["sha256"]},
+        {"required": ["md5"]},
+        {"required": ["track_layout_sha256"]}
+      ]
+    },
+    "asset_action": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "path", "sha256"],
+      "properties": {
+        "type": {"enum": ["apply_ppf", "apply_xdelta", "set_pops_config"]},
+        "path": {"type": "string"},
+        "sha256": {"$ref": "#/$defs/hash256"}
+      }
+    },
+    "action": {
+      "oneOf": [
+        {"$ref": "#/$defs/asset_action"},
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "magic_word"],
+          "properties": {
+            "type": {"const": "set_libcrypt"},
+            "magic_word": {"type": "integer", "minimum": 0, "maximum": 65535}
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "value"],
+          "properties": {
+            "type": {"const": "set_game_id"},
+            "value": {"type": "string", "pattern": "^[A-Z0-9]{4,16}$"}
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "value"],
+          "properties": {
+            "type": {"const": "set_region"},
+            "value": {"enum": ["pal", "ntsc-u", "ntsc-j"]}
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "mode"],
+          "properties": {
+            "type": {"const": "set_cdda"},
+            "mode": {"enum": ["atrac3", "raw"]}
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "level"],
+          "properties": {
+            "type": {"const": "set_compression"},
+            "level": {"type": "integer", "minimum": 0, "maximum": 9}
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "version"],
+          "properties": {
+            "type": {"const": "set_popsloader"},
+            "version": {"type": "string", "minLength": 1}
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "enabled"],
+          "properties": {
+            "type": {"const": "set_undither"},
+            "enabled": {"type": "boolean"}
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type"],
+          "properties": {"type": {"const": "preserve_disc"}}
+        }
+      ]
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "url"],
+      "properties": {
+        "name": {"type": "string", "minLength": 1},
+        "url": {"type": "string", "pattern": "^https?://"},
+        "note": {"type": "string"}
+      }
+    },
+    "test": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["target", "device", "result", "date"],
+      "properties": {
+        "target": {"$ref": "#/$defs/target"},
+        "device": {"type": "string", "minLength": 1},
+        "firmware": {"type": "string"},
+        "result": {"enum": ["pass", "fail", "partial"]},
+        "date": {"type": "string", "format": "date"}
+      }
+    },
+    "rule": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "title", "status", "match", "targets", "actions", "sources", "credits", "tests"],
+      "properties": {
+        "id": {"type": "string", "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"},
+        "title": {"type": "string", "minLength": 1},
+        "status": {"enum": ["verified", "reported", "experimental"]},
+        "match": {"$ref": "#/$defs/match"},
+        "targets": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/target"}
+        },
+        "actions": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"$ref": "#/$defs/action"}
+        },
+        "sources": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"$ref": "#/$defs/source"}
+        },
+        "credits": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1}
+        },
+        "tests": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/test"}
+        }
+      }
+    }
+  }
+}

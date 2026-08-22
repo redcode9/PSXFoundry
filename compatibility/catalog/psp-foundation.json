@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "catalog": "psp-foundation",
+  "rules": [
+    {
+      "id": "crash-bash-sces02834-europe",
+      "title": "Crash Bash",
+      "status": "reported",
+      "match": {
+        "disc_ids": ["SCES02834"],
+        "sha256": ["69e9d985b9d539c4b8eb514a0619993caf26332089d4ffe7d8187dc0f7893649"],
+        "region": "pal",
+        "sector_counts": [83904]
+      },
+      "targets": ["psp", "adrenaline"],
+      "actions": [
+        {
+          "type": "apply_ppf",
+          "path": "libcrypt/Crash Bash (Europe) (En,Fr,De,Es,It).ppf",
+          "sha256": "e5caf3dfd06c8a4a0d8a057cccd7d9221fca7c46fdf0ea144e0c1ceb453823a2"
+        },
+        {
+          "type": "set_libcrypt",
+          "magic_word": 59176
+        },
+        {
+          "type": "set_pops_config",
+          "path": "pspconfigs/Crash Bash/SCES-02834.bin",
+          "sha256": "57b27806c9ea3ac0a80d489b104fa50fa83e2de1080f6392869d65dfe1834028"
+        }
+      ],
+      "sources": [
+        {
+          "name": "POP-FE",
+          "url": "https://github.com/sahlberg/pop-fe",
+          "note": "POPS configuration and LibCrypt correction"
+        },
+        {
+          "name": "Redump",
+          "url": "http://redump.org/disc/5483/",
+          "note": "Disc revision reference"
+        }
+      ],
+      "credits": ["POP-FE contributors", "krHACKen"],
+      "tests": []
+    }
+  ]
+}
