@@ -11,7 +11,9 @@
 #
 
 import argparse
+from collections import deque
 import configparser
+from concurrent.futures import ThreadPoolExecutor
 import datetime
 import hashlib
 import io
@@ -22,6 +24,19 @@ import sys
 import zlib
 
 from gamedb import games
+
+
+PSISO_BLOCK_SIZE = 0x9300
+
+
+def _encode_psiso_block(block, compression_level):
+    checksum = hashlib.sha1(block).digest()[:16]
+    if compression_level == 0:
+        return block, checksum
+    compressed = zlib.compress(block, compression_level)[2:-4]
+    if len(compressed) >= PSISO_BLOCK_SIZE:
+        return block, checksum
+    return compressed, checksum
 
 _basic_toc = bytes([
     0x41, 0x00, 0xa0, 0x00, 0x00, 0x00, 0x00, 0x01, 0x20, 0x00,
@@ -2421,6 +2436,7 @@ class popstation(object):
         self._striptracks = False
         # complevel is >0 for PSP and ==0 for PS3
         self._complevel = 1
+        self._compression_workers = max(1, min(8, os.cpu_count() or 1))
         self._no_pstitleimg = False
         self._disc_ids = ['SLUS00000']
         self._game_title = 'TITLE'
@@ -2593,6 +2609,16 @@ class popstation(object):
     @complevel.setter
     def complevel(self, value):
         self._complevel = value
+
+    @property
+    def compression_workers(self):
+        return self._compression_workers
+
+    @compression_workers.setter
+    def compression_workers(self, value):
+        if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+            raise ValueError('compression_workers must be a positive integer')
+        self._compression_workers = value
 
     @property
     def no_pstitleimg(self):
@@ -2787,13 +2813,14 @@ class popstation(object):
         att = bytes(0)
         with open(img_toc[0], 'rb') as f:
             f.seek(0, 2)
-            isosize = f.tell()
+            source_size = f.tell()
         if self._striptracks and disc_num < len(self._track0_size):
             track0_size = self._track0_size[disc_num]
             if track0_size is not None:
-                isosize = track0_size
-        if isosize % 0x9300:
-            isosize = isosize + (0x9300 - (isosize%0x9300))
+                source_size = track0_size
+        isosize = source_size
+        if isosize % PSISO_BLOCK_SIZE:
+            isosize += PSISO_BLOCK_SIZE - isosize % PSISO_BLOCK_SIZE
 
         psiso_offset = fh.tell()
 
@@ -2851,7 +2878,7 @@ class popstation(object):
 
         print('Writing indexes') if self._verbose else None
         index_offset = fh.tell()
-        for i in range(int(isosize / 0x9300)):
+        for i in range(int(isosize / PSISO_BLOCK_SIZE)):
             b = bytearray(32)
             fh.write(b)
 
@@ -2873,45 +2900,61 @@ class popstation(object):
         fh.write(bytes(psiso_offset + 0x100000 - offset))
 
         print('Writing PSX CD Dump') if self._verbose else None
-        fi = open(img_toc[0], 'rb')
         indexes = bytearray(0)
         print('Writing compressed image') if self._verbose else None
         offset = 0
-        i = 0
 
-        while True:
-            if fi.tell() >= isosize:
-                break
-            buf = fi.read(0x9300)
-            if not buf:
-                break
-            if len(buf) < 0x9300:
-                buf = buf + bytearray(0x9300 - len(buf))
-            if self._hotfixes and fi.tell() < 1048576:
-                for fix in self._hotfixes:
-                    buf = buf.replace(fix[0], fix[1])
-            c = buf
-            if self._complevel != 0:
-                c = zlib.compress(buf, self._complevel)
-                c = c[2:-4]
+        def source_blocks():
+            remaining = source_size
+            with open(img_toc[0], 'rb') as source:
+                while remaining:
+                    buf = source.read(min(PSISO_BLOCK_SIZE, remaining))
+                    if not buf:
+                        raise EOFError('disc image ended before the planned size')
+                    remaining -= len(buf)
+                    if len(buf) < PSISO_BLOCK_SIZE:
+                        buf += bytes(PSISO_BLOCK_SIZE - len(buf))
+                    if self._hotfixes and source.tell() < 1048576:
+                        for fix in self._hotfixes:
+                            buf = buf.replace(fix[0], fix[1])
+                    yield buf
+
+        def encoded_blocks():
+            blocks = source_blocks()
+            if self._complevel == 0 or self._compression_workers == 1:
+                for block in blocks:
+                    yield _encode_psiso_block(block, self._complevel)
+                return
+
+            queue = deque()
+            queue_limit = self._compression_workers * 2
+            with ThreadPoolExecutor(
+                max_workers=self._compression_workers,
+                thread_name_prefix='psiso',
+            ) as executor:
+                for block in blocks:
+                    queue.append(
+                        executor.submit(
+                            _encode_psiso_block,
+                            block,
+                            self._complevel,
+                        )
+                    )
+                    if len(queue) >= queue_limit:
+                        yield queue.popleft().result()
+                while queue:
+                    yield queue.popleft().result()
+
+        for compressed, checksum in encoded_blocks():
             idx = bytearray(32)
             struct.pack_into('<I', idx, 0, offset)
-            h = hashlib.sha1()
-            h.update(buf)
             if self._complevel == 0:
                 idx[6] = 0x01 # we need this for uncompressed image in ps3 pkg?
-            idx[8:24] = h.digest()[:16]
-            if len(c) >= 0x9300:
-                struct.pack_into('<H', idx, 4, 0x9300)
-                fh.write(buf)
-                offset = offset + 0x9300
-            if len(c) < 0x9300:
-                struct.pack_into('<H', idx, 4, len(c))
-                fh.write(c)
-                offset = offset + len(c)
+            idx[8:24] = checksum
+            struct.pack_into('<H', idx, 4, len(compressed))
+            fh.write(compressed)
+            offset += len(compressed)
             indexes = indexes + idx
-            i = i + 1
-        fi.close()
 
         # insert the aa3 blobs
         if disc_num < len(self._aea):
