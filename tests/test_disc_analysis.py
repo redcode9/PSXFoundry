@@ -1,0 +1,141 @@
+import hashlib
+import tempfile
+import unittest
+import zipfile
+from dataclasses import replace
+from pathlib import Path
+
+from psxfoundry.disc import (
+    DiscAnalysisError,
+    analyze_disc,
+    group_disc_sets,
+)
+
+
+SECTOR_SIZE = 2352
+
+
+def disc_bytes(sectors, serial=b"SCES_028.34"):
+    data = bytearray(sectors * SECTOR_SIZE)
+    data[512 : 512 + len(serial)] = serial
+    return bytes(data)
+
+
+class DiscAnalysisTests(unittest.TestCase):
+    def test_analyzes_mixed_mode_cue_without_changing_source(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            image = root / "GAME.BIN"
+            source = disc_bytes(6)
+            image.write_bytes(source)
+            cue = root / "Game.cue"
+            cue.write_text(
+                'FILE "game.bin" BINARY\n'
+                "  TRACK 01 MODE2/2352\n"
+                "    INDEX 01 00:00:00\n"
+                "  TRACK 02 AUDIO\n"
+                "    INDEX 00 00:00:03\n"
+                "    INDEX 01 00:00:04\n",
+                encoding="utf-8",
+            )
+
+            result = analyze_disc(cue)
+
+            self.assertEqual(result.disc_id, "SCES02834")
+            self.assertEqual(result.region, "pal")
+            self.assertEqual(result.sector_count, 6)
+            self.assertEqual(result.sha256, hashlib.sha256(source).hexdigest())
+            self.assertEqual([track.mode for track in result.tracks], ["MODE2/2352", "AUDIO"])
+            self.assertEqual(result.tracks[0].stop_sector, 2)
+            self.assertEqual(result.tracks[1].start_sector, 4)
+            self.assertTrue(result.has_audio)
+            self.assertEqual(image.read_bytes(), source)
+
+    def test_analyzes_bare_raw_image(self):
+        with tempfile.TemporaryDirectory() as directory:
+            image = Path(directory) / "disc.bin"
+            image.write_bytes(disc_bytes(2, b"SLUS_000.01"))
+
+            result = analyze_disc(image)
+
+            self.assertEqual(result.format, "bin")
+            self.assertEqual(result.disc_id, "SLUS00001")
+            self.assertEqual(result.region, "ntsc-u")
+            self.assertEqual(result.tracks[0].stop_sector, 1)
+
+    def test_analyzes_ccd_track_table(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            image = root / "Game.img"
+            image.write_bytes(disc_bytes(3, b"SLPS_000.01"))
+            ccd = root / "Game.ccd"
+            ccd.write_text(
+                "[CloneCD]\nVersion=3\n"
+                "[TRACK 1]\nMODE=2\nINDEX 1=0\n",
+                encoding="utf-8",
+            )
+
+            result = analyze_disc(ccd)
+
+            self.assertEqual(result.format, "ccd")
+            self.assertEqual(result.disc_id, "SLPS00001")
+            self.assertEqual(result.tracks[0].stop_sector, 2)
+
+    def test_analyzes_zip_cue_without_extracting(self):
+        with tempfile.TemporaryDirectory() as directory:
+            archive_path = Path(directory) / "disc.zip"
+            source = disc_bytes(2, b"SCUS_000.02")
+            with zipfile.ZipFile(archive_path, "w") as archive:
+                archive.writestr(
+                    "set/Game.cue",
+                    'FILE "Game.bin" BINARY\n'
+                    "  TRACK 01 MODE2/2352\n"
+                    "    INDEX 01 00:00:00\n",
+                )
+                archive.writestr("set/Game.bin", source)
+
+            result = analyze_disc(archive_path)
+
+            self.assertEqual(result.format, "zip/cue")
+            self.assertEqual(result.disc_id, "SCUS00002")
+            self.assertEqual(result.sha256, hashlib.sha256(source).hexdigest())
+            self.assertEqual(list(Path(directory).iterdir()), [archive_path])
+
+    def test_marks_chd_as_incomplete_without_external_metadata(self):
+        with tempfile.TemporaryDirectory() as directory:
+            chd = Path(directory) / "disc.chd"
+            chd.write_bytes(b"MComprHD" + bytes(128))
+
+            result = analyze_disc(chd)
+
+            self.assertFalse(result.complete)
+            self.assertIsNone(result.sector_count)
+            self.assertIn("chdman", result.warnings[0])
+
+    def test_rejects_unsafe_zip_path(self):
+        with tempfile.TemporaryDirectory() as directory:
+            archive_path = Path(directory) / "disc.zip"
+            with zipfile.ZipFile(archive_path, "w") as archive:
+                archive.writestr("../disc.bin", disc_bytes(1))
+
+            with self.assertRaisesRegex(DiscAnalysisError, "unsafe path"):
+                analyze_disc(archive_path)
+
+    def test_groups_detected_titles_before_filenames(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            first_path = root / "First.bin"
+            second_path = root / "Unrelated.bin"
+            first_path.write_bytes(disc_bytes(1, b"SCUS_000.01"))
+            second_path.write_bytes(disc_bytes(1, b"SCUS_000.02"))
+            first = replace(analyze_disc(first_path), title="Example Game")
+            second = replace(analyze_disc(second_path), title="Example Game")
+
+            groups = group_disc_sets((first, second))
+
+            self.assertEqual(len(groups), 1)
+            self.assertEqual(len(groups[0].discs), 2)
+
+
+if __name__ == "__main__":
+    unittest.main()
