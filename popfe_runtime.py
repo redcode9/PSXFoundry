@@ -39,7 +39,7 @@ _SOURCE_TOOL_PATHS = {
     "binmerge": ("binmerge/binmerge", "binmerge.py"),
     "cue2cu2": ("Cue2cu2/cue2cu2.py", "cue2cu2.py"),
     "libcrypt-patcher": ("lcp",),
-    "pkg": ("PSL1GHT/tools/ps3py/pkg.py",),
+    "pkg": ("build/macos/helpers/pkg", "PSL1GHT/tools/ps3py/pkg.py"),
     "psx-undither": ("psx-undither/build/psxund",),
     "sign3": ("sign3.py",),
 }
@@ -108,7 +108,11 @@ class RuntimePaths:
         )
         detected_source_file = _resolved(source_file or __file__)
         source_root = detected_source_file.parent
-        detected_executable = _resolved(executable or sys.executable)
+        detected_executable = Path(
+            os.path.abspath(
+                os.path.expanduser(os.fspath(executable or sys.executable))
+            )
+        )
         detected_home = _resolved(home or Path.home())
         detected_cwd = _resolved(cwd or Path.cwd())
         detected_environment = dict(os.environ if environ is None else environ)

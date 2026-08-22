@@ -944,7 +944,7 @@ class PopFePs3App:
                          no_libcrypt=True,
                          planned_configs=read_ps3_configs(plan))
         Path(output_path).with_name('PSXFoundry-report.txt').write_text(
-            render_target_workflow_report(plan),
+            render_target_workflow_report(plan) + 'Validation: passed\n',
             encoding='utf-8',
         )
         self.master.config(cursor='')

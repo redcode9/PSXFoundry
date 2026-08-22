@@ -16,6 +16,7 @@ try:
 except:
     print('You need to install python module pillow')
 import argparse
+import atexit
 import hashlib
 import io
 import os
@@ -23,6 +24,7 @@ import re
 import random
 import shutil
 import struct
+from pathlib import Path
 have_pycdlib = False
 try:
     import pycdlib
@@ -75,7 +77,16 @@ except:
     True
 from cue import parse_ccd, parse_cue, ccd2cue, write_cue
 from popstation import popstation, GenerateSFO
+from psxfoundry.cache import AnalysisCache
 from psxfoundry.psp import lead_out_msf, track_end_offset, whole_disc_modes
+from psxfoundry.psp_workflow import (
+    build_target_plan,
+    read_planned_configs,
+    read_ps3_configs,
+    verify_planned_patch_sources,
+)
+from psxfoundry.report import render_target_workflow_report
+from psxfoundry.validation import validate_eboot, validate_generated_eboot
 from psxfoundry.work import atomic_output, clone_or_copy
 from ppf import ApplyPPF
 from riff import copy_riff, create_riff, parse_riff
@@ -2587,7 +2598,7 @@ def get_imgs_from_bin(cue):
     return img_files
 
 
-def create_retroarch_bin(dest, game_title, cue_files, img_files):
+def create_retroarch_bin(dest, game_title, cue_files, img_files, magic_word=()):
     try:
         os.mkdir(dest)
     except:
@@ -2601,6 +2612,8 @@ def create_retroarch_bin(dest, game_title, cue_files, img_files):
             f = dest + '/' + g
             print('Installing', f) if verbose else None
             copy_file(img_files[i], f)
+            if i < len(magic_word) and magic_word[i]:
+                create_sbi(dest + '/' + g[:-4] + '.sbi', magic_word[i])
             
 
 def create_retroarch_cue(dest, game_title, cue_files, img_files, magic_word):
@@ -2624,7 +2637,7 @@ def create_retroarch_cue(dest, game_title, cue_files, img_files, magic_word):
                 b = dest + '/' + p + '.bin'
                 print('Installing', b) if verbose else None
                 copy_file(img_files[i], b)
-            if i < len(magic_word):
+            if i < len(magic_word) and magic_word[i]:
                 print('Create magic word for disc', i)
                 create_sbi(dest + '/' + p + '.sbi', magic_word[i])
                 
@@ -3417,6 +3430,10 @@ def create_ps3(dest, disc_ids, real_disc_ids, game_title, icon0, pic0, pic1, cue
         True
     print('Create EBOOT.PBP at', p.eboot)
     p.create_pbp()
+    validation = validate_eboot(p.eboot)
+    if not validation.ok:
+        os.unlink(p.eboot)
+        raise ValueError('generated PS3 EBOOT failed structural validation')
     temp_files.append(p.eboot)
     temp_files.append(p.iso_bin_dat)
     try:
@@ -3524,15 +3541,6 @@ def create_ps3(dest, disc_ids, real_disc_ids, game_title, icon0, pic0, pic1, cue
     temp_files.append(subdir + disc_ids[0] + '/USRDIR')
     temp_files.append(subdir + disc_ids[0])
     print('Finished.', dest, 'created')
-    for f in temp_files:
-        print('Deleting temp file', f) if verbose else None
-        try:
-            os.unlink(f)
-        except:
-            try:
-                os.rmdir(f)
-            except:
-                True
     return dest
 
     
@@ -4398,6 +4406,75 @@ def apply_planned_patches(cue_files, img_files, patches_by_disc, subdir):
     return cue_files, img_files
 
 
+def prepare_target_inputs(
+    plan,
+    cue_files,
+    img_files,
+    real_disc_ids,
+    subdir,
+    *,
+    undither=False,
+    include_libcrypt=True,
+):
+    """Create isolated inputs for one planned target conversion."""
+    target_dir = os.path.join(subdir, 'targets', plan.target) + os.sep
+    os.makedirs(target_dir, exist_ok=True)
+    verify_planned_patch_sources(plan, img_files)
+    working_cues, working_images = apply_planned_patches(
+        cue_files,
+        img_files,
+        tuple(disc.patches for disc in plan.discs),
+        target_dir,
+    )
+    if undither or plan.undither:
+        working_cues, working_images = patch_undither(
+            real_disc_ids,
+            working_cues,
+            working_images,
+            subdir=target_dir,
+        )
+
+    magic_word = tuple(
+        disc.libcrypt_magic_word or 0
+        if include_libcrypt
+        else 0
+        for disc in plan.discs
+    )
+    subchannels = tuple(
+        generate_subchannels(value) if value else None
+        for value in magic_word
+    )
+    return working_cues, working_images, magic_word, subchannels
+
+
+def write_target_report(
+    report_path,
+    plan,
+    eboot_path=None,
+    *,
+    overrides=(),
+    validated=False,
+):
+    """Write one plan report and include structural PBP validation."""
+    report_path = Path(report_path)
+    report = render_target_workflow_report(plan)
+    if overrides:
+        report += 'Overrides:\n' + ''.join(f'- {item}\n' for item in overrides)
+    if eboot_path is None:
+        if validated:
+            report += 'Validation: passed\n'
+        report_path.write_text(report, encoding='utf-8')
+        return
+
+    validation = validate_generated_eboot(
+        eboot_path,
+        report_path=report_path,
+    )
+    report_path.write_text(report + validation.to_text(), encoding='utf-8')
+    if not validation.ok:
+        raise ValueError('generated EBOOT failed structural validation')
+
+
 #
 # Apply all romhacks
 #
@@ -4774,6 +4851,8 @@ if __name__ == "__main__":
         exit(1)
 
     work_dir = popfe_runtime.application_work_dir('cli', 'pop-fe-work')
+    if popfe_runtime.is_macos:
+        atexit.register(popfe_runtime.remove_work_dir, work_dir)
     if not popfe_runtime.is_macos:
         shutil.rmtree(work_dir, ignore_errors=True)
         work_dir.mkdir(parents=True)
@@ -4818,11 +4897,6 @@ if __name__ == "__main__":
     real_disc_ids = disc_ids[:]
                 
     #
-    # Apply all PPF fixes we might need
-    #
-    cue_files, img_files = apply_ppf_fixes(real_disc_ids, cue_files, img_files, md5_sums, subdir, tag='psp' if args.psp_dir else None)
-
-    #
     # Apply all romhacks
     #
     if args.romhacks:
@@ -4836,13 +4910,6 @@ if __name__ == "__main__":
             os._exit(1)
         cue_files, img_files = apply_romhacks(real_disc_ids, cue_files, img_files, romhacks, subdir)
     
-    if args.psp_dir or args.ps3_pkg or args.retroarch_pbp_dir:
-        aea_files, extra_data_tracks = generate_aea_files(cue_files, img_files, subdir)
-        if extra_data_tracks:
-            args.whole_disk = True
-            args.psp_use_cdda = False
-            print('Extra data tracks found, forcing WHOLE DISK encoding')
-
     if args.game_id:
         args.game_id = args.game_id.split(',')
         # override the disc_ids with the content of --game_id
@@ -4854,6 +4921,48 @@ if __name__ == "__main__":
             raise Exception('Must specify --game_id when using --psp-install-memory-card')
         install_psp_mc(args.psp_dir, args.game_id[0], mem_cards)
         quit()
+
+    psp_target = None
+    if args.psp_dir:
+        psp_target = (
+            'adrenaline'
+            if os.path.basename(os.path.normpath(args.psp_dir)).casefold() == 'pspemu'
+            else 'psp'
+        )
+    requested_targets = set()
+    if psp_target:
+        requested_targets.add(psp_target)
+    if args.ps2_dir:
+        requested_targets.add('ps2')
+    if args.ps3_pkg:
+        requested_targets.add('ps3')
+    if args.psc_dir:
+        requested_targets.add('playstation-classic')
+    if args.psio_dir:
+        requested_targets.add('psio')
+    if args.retroarch_bin_dir or args.retroarch_cue_dir or args.retroarch_pbp_dir:
+        requested_targets.add('retroarch')
+
+    analysis_cache = AnalysisCache(
+        popfe_runtime.cache_dir / 'psxfoundry' / 'analysis'
+    )
+    target_plans = {
+        target: build_target_plan(
+            cue_files,
+            target,
+            fallback_disc_ids=real_disc_ids,
+            analysis_cache=analysis_cache,
+        )
+        for target in sorted(requested_targets)
+    }
+
+    def output_disc_ids(plan):
+        values = list(plan.output_disc_ids)
+        if args.game_id:
+            for number, value in enumerate(args.game_id):
+                if number < len(values):
+                    values[number] = value
+        return tuple(values)
 
     resolution = 1
     if args.ps3_pkg and (real_disc_ids[0][:3] == 'SLE' or real_disc_ids[0][:3] == 'SCE'):
@@ -4958,28 +5067,6 @@ if __name__ == "__main__":
     print('Id:', games[disc_ids[0]]['id'])
     print('Title:', game_title)
 
-    subchannels = []
-    magic_word = []
-    for idx in range(len(real_disc_ids)):
-        if 'psp-use-cdda' in games[real_disc_ids[idx]]:
-            args.psp_use_cdda = True
-        if real_disc_ids[idx] not in libcrypt:
-            magic_word.append(0)
-            subchannels.append(None)
-            continue
-        
-        magic_word.append(libcrypt[real_disc_ids[idx]]['magic_word'])
-        subchannels.append(generate_subchannels(libcrypt[real_disc_ids[idx]]['magic_word']))
-
-    # for psp and ps3 we patch libcrypt in the respective create_[pps|ps3] functions
-    if not args.no_libcrypt and not args.ps3_pkg and not args.psp_dir:
-        try:
-            # The libcrypt patcher crashes on some games like 'This Is Football (Europe) (Fr,Nl)'
-            cue_files, img_files = patch_libcrypt(disc_ids, cue_files, img_files, subdir=subdir)
-        except:
-            print('patch_libcrypt crashed :-(')
-            True
-    
     print('Cue Files', cue_files) if verbose else None
     print('Img Files', img_files) if verbose else None
     print('Real Disc IDs', real_disc_ids) if verbose else None
@@ -5012,24 +5099,219 @@ if __name__ == "__main__":
         print('Disable SND0')
         snd0 = None
 
+    def libcrypt_overrides(plan):
+        if args.no_libcrypt and any(
+            disc.libcrypt_magic_word is not None for disc in plan.discs
+        ):
+            return ('LibCrypt handling disabled',)
+        return ()
+
     if args.psp_dir:
-        create_psp(args.psp_dir, disc_ids, real_disc_ids, game_title, icon0, pic0, pic1, cue_files, real_cue_files, img_files, mem_cards, aea_files, snd0=snd0, subdir=subdir, watermark=args.watermark, subchannels=subchannels, manual=psp_manual, use_cdda=args.psp_use_cdda, logo=logo, no_libcrypt=args.no_libcrypt, psx_undither=args.psx_undither)
+        plan = target_plans[psp_target]
+        target_ids = output_disc_ids(plan)
+        target_cues, target_images, _, target_subchannels = prepare_target_inputs(
+            plan,
+            cue_files,
+            img_files,
+            real_disc_ids,
+            subdir,
+            undither=args.psx_undither,
+            include_libcrypt=not args.no_libcrypt,
+        )
+        aea_files, extra_data_tracks = generate_aea_files(
+            target_cues, target_images, subdir
+        )
+        use_cdda = args.psp_use_cdda or plan.use_cdda
+        if extra_data_tracks:
+            use_cdda = False
+            print('Extra data tracks found, forcing WHOLE DISK encoding')
+        output_path = create_psp(
+            args.psp_dir,
+            target_ids,
+            real_disc_ids,
+            game_title,
+            icon0,
+            pic0,
+            pic1,
+            target_cues,
+            real_cue_files,
+            target_images,
+            mem_cards,
+            aea_files,
+            snd0=snd0,
+            subdir=subdir,
+            watermark=args.watermark,
+            subchannels=target_subchannels,
+            manual=psp_manual,
+            use_cdda=use_cdda,
+            logo=logo,
+            no_libcrypt=True,
+            psx_undither=False,
+            force_ntsc=plan.force_ntsc,
+            cdda=use_cdda,
+            planned_configs=read_planned_configs(
+                plan, force_ntsc=False, cdda=False
+            ),
+            compression_level=plan.compression_level,
+        )
+        write_target_report(
+            Path(output_path).with_name('PSXFoundry-report.txt'),
+            plan,
+            output_path,
+            overrides=libcrypt_overrides(plan),
+        )
     if args.ps2_dir:
-        create_ps2(args.ps2_dir, disc_ids, game_title, icon0, pic1, cue_files, img_files, subdir=subdir)
+        plan = target_plans['ps2']
+        target_ids = output_disc_ids(plan)
+        target_cues, target_images, _, _ = prepare_target_inputs(
+            plan, cue_files, img_files, real_disc_ids, subdir
+        )
+        create_ps2(
+            args.ps2_dir,
+            target_ids,
+            game_title,
+            icon0,
+            pic1,
+            target_cues,
+            target_images,
+            subdir=subdir,
+        )
+        write_target_report(
+            Path(args.ps2_dir) / 'PSXFoundry-ps2-report.txt',
+            plan,
+        )
     if args.ps3_pkg:
-        create_ps3(args.ps3_pkg, disc_ids, real_disc_ids, game_title, icon0, pic0, pic1, cue_files, real_cue_files, img_files, mem_cards, aea_files, magic_word, resolution, snd0=snd0, subdir=subdir, whole_disk=args.whole_disk, subchannels=subchannels, manual=ps3_manual, no_libcrypt=args.no_libcrypt, psx_undither=args.psx_undither, ps1_newemu=args.ps1_newemu, enable_swap=args.swap_discs)
+        plan = target_plans['ps3']
+        target_ids = output_disc_ids(plan)
+        target_cues, target_images, magic_word, target_subchannels = prepare_target_inputs(
+            plan,
+            cue_files,
+            img_files,
+            real_disc_ids,
+            subdir,
+            undither=args.psx_undither,
+            include_libcrypt=not args.no_libcrypt,
+        )
+        aea_files, extra_data_tracks = generate_aea_files(
+            target_cues, target_images, subdir
+        )
+        whole_disk = args.whole_disk or extra_data_tracks
+        output_path = create_ps3(
+            args.ps3_pkg,
+            target_ids,
+            real_disc_ids,
+            game_title,
+            icon0,
+            pic0,
+            pic1,
+            target_cues,
+            real_cue_files,
+            target_images,
+            mem_cards,
+            aea_files,
+            magic_word,
+            resolution,
+            snd0=snd0,
+            subdir=subdir,
+            whole_disk=whole_disk,
+            subchannels=target_subchannels,
+            manual=ps3_manual,
+            no_libcrypt=True,
+            psx_undither=False,
+            ps1_newemu=args.ps1_newemu,
+            enable_swap=args.swap_discs,
+            force_ntsc=plan.force_ntsc,
+            planned_configs=read_ps3_configs(plan),
+        )
+        write_target_report(
+            Path(output_path).with_name('PSXFoundry-report.txt'),
+            plan,
+            overrides=libcrypt_overrides(plan),
+            validated=True,
+        )
     if args.psc_dir:
-        create_psc(args.psc_dir, disc_ids, game_title, icon0, pic1, cue_files, img_files, watermark=True if args.watermark else False, subdir=subdir)
+        plan = target_plans['playstation-classic']
+        target_ids = output_disc_ids(plan)
+        target_cues, target_images, _, _ = prepare_target_inputs(
+            plan, cue_files, img_files, real_disc_ids, subdir
+        )
+        create_psc(
+            args.psc_dir,
+            target_ids,
+            game_title,
+            icon0,
+            pic1,
+            target_cues,
+            target_images,
+            watermark=bool(args.watermark),
+            subdir=subdir,
+        )
+        psc_output = Path(args.psc_dir) / 'Games' / (game_title + '.PBP')
+        write_target_report(
+            psc_output.with_name('PSXFoundry-report.txt'),
+            plan,
+            psc_output,
+        )
     if args.fetch_metadata:
         create_metadata(args.files[0], disc_ids[0], game_title, icon0, pic0, pic1, snd0, manual)
     if args.psio_dir:
-        create_psio(args.psio_dir, disc_ids[0], game_title, icon0, cue_files, img_files, subdir=subdir)
+        plan = target_plans['psio']
+        target_ids = output_disc_ids(plan)
+        target_cues, target_images, _, _ = prepare_target_inputs(
+            plan, cue_files, img_files, real_disc_ids, subdir
+        )
+        create_psio(
+            args.psio_dir,
+            target_ids[0],
+            game_title,
+            icon0,
+            target_cues,
+            target_images,
+            subdir=subdir,
+        )
+        write_target_report(
+            Path(args.psio_dir) / game_title / 'PSXFoundry-report.txt',
+            plan,
+        )
+    retroarch_plan = target_plans.get('retroarch')
+    if retroarch_plan:
+        retroarch_ids = output_disc_ids(retroarch_plan)
+        retroarch_cues, retroarch_images, retroarch_magic, retroarch_subchannels = prepare_target_inputs(
+            retroarch_plan,
+            cue_files,
+            img_files,
+            real_disc_ids,
+            subdir,
+            include_libcrypt=not args.no_libcrypt,
+        )
     if args.retroarch_bin_dir:
         new_path = args.retroarch_bin_dir + '/' + game_title
-        create_retroarch_bin(new_path, game_title, cue_files, img_files)
+        create_retroarch_bin(
+            new_path,
+            game_title,
+            retroarch_cues,
+            retroarch_images,
+            retroarch_magic,
+        )
+        write_target_report(
+            Path(new_path) / 'PSXFoundry-report.txt',
+            retroarch_plan,
+            overrides=libcrypt_overrides(retroarch_plan),
+        )
     if args.retroarch_cue_dir:
         new_path = args.retroarch_cue_dir + '/' + game_title
-        create_retroarch_cue(new_path, game_title, cue_files, img_files, magic_word)
+        create_retroarch_cue(
+            new_path,
+            game_title,
+            retroarch_cues,
+            retroarch_images,
+            retroarch_magic,
+        )
+        write_target_report(
+            Path(new_path) / 'PSXFoundry-report.txt',
+            retroarch_plan,
+            overrides=libcrypt_overrides(retroarch_plan),
+        )
     if args.retroarch_thumbnail_dir:
         create_retroarch_thumbnail(args.retroarch_thumbnail_dir, game_title, icon0, pic1)
     if args.retroarch_pbp_dir:
@@ -5048,7 +5330,30 @@ if __name__ == "__main__":
             i.seek(0)
             pic1 = i.read()
         
-        generate_pbp(new_path, disc_ids, game_title, icon0, None, pic1, cue_files, img_files, aea_files, None, subdir=subdir)
+        aea_files, _ = generate_aea_files(
+            retroarch_cues, retroarch_images, subdir
+        )
+        generate_pbp(
+            new_path,
+            retroarch_ids,
+            game_title,
+            icon0,
+            None,
+            pic1,
+            retroarch_cues,
+            retroarch_images,
+            aea_files,
+            None,
+            subdir=subdir,
+            subchannels=retroarch_subchannels,
+            compression_level=retroarch_plan.compression_level,
+        )
+        write_target_report(
+            Path(new_path).with_name('PSXFoundry-report.txt'),
+            retroarch_plan,
+            new_path,
+            overrides=libcrypt_overrides(retroarch_plan),
+        )
     for f in temp_files:
         print('Deleting temp file', f) if verbose else None
         try:

@@ -34,7 +34,7 @@ class BackendToolIntegrationTests(unittest.TestCase):
         sign_command = self.runtime.tool_command("sign3", "image.bin")
         cue_command = self.runtime.tool_command("cue2cu2", "image.cue")
 
-        self.assertEqual(Path(sign_command[0]), Path(sys.executable).resolve())
+        self.assertEqual(Path(sign_command[0]), Path(sys.executable).absolute())
         self.assertEqual(Path(sign_command[1]), REPOSITORY_ROOT / "sign3.py")
         self.assertEqual(
             Path(cue_command[1]),
@@ -72,6 +72,10 @@ class BackendToolIntegrationTests(unittest.TestCase):
             "popfe_runtime.application_work_dir('cli', 'pop-fe-work')",
             source,
         )
+        self.assertIn(
+            "atexit.register(popfe_runtime.remove_work_dir, work_dir)",
+            source,
+        )
         self.assertIn("popfe_runtime.remove_work_dir(work_dir)", source)
         self.assertNotIn("subdir = 'pop-fe-work/'", source)
         self.assertNotIn("os.unlink('NORMAL01.iso')", source)
@@ -81,6 +85,25 @@ class BackendToolIntegrationTests(unittest.TestCase):
         thumbnail = "if args.retroarch_thumbnail_dir:"
         pbp = "if args.retroarch_pbp_dir:"
         self.assertLess(source.index(thumbnail), source.index(pbp))
+
+    def test_cli_plans_and_isolates_each_output_target(self):
+        source = (REPOSITORY_ROOT / "pop-fe.py").read_text(encoding="utf-8")
+        main = source[source.index('if __name__ == "__main__":'):]
+
+        self.assertIn("target_plans = {", main)
+        self.assertIn("prepare_target_inputs(", main)
+        self.assertIn("target_plans['ps3']", main)
+        self.assertIn("target_plans.get('retroarch')", main)
+        self.assertNotIn("apply_ppf_fixes(", main)
+        self.assertNotIn("patch_libcrypt(", main)
+
+    def test_retroarch_writes_sbi_only_for_libcrypt_discs(self):
+        source = (REPOSITORY_ROOT / "pop-fe.py").read_text(encoding="utf-8")
+
+        self.assertEqual(
+            source.count("i < len(magic_word) and magic_word[i]"),
+            2,
+        )
 
 
 if __name__ == "__main__":
