@@ -3145,7 +3145,7 @@ def create_psc(dest, disc_ids, game_title, icon0, pic1, cue_files, img_files, wa
         True
 
             
-def create_ps3(dest, disc_ids, real_disc_ids, game_title, icon0, pic0, pic1, cue_files, real_cue_files, img_files, mem_cards, aea_files, magic_word, resolution, subdir = './', snd0=None, whole_disk=True, subchannels=[], manual=None, no_libcrypt=None, psx_undither=False, ps1_newemu=False, enable_swap=False, force_ntsc=False):
+def create_ps3(dest, disc_ids, real_disc_ids, game_title, icon0, pic0, pic1, cue_files, real_cue_files, img_files, mem_cards, aea_files, magic_word, resolution, subdir = './', snd0=None, whole_disk=True, subchannels=[], manual=None, no_libcrypt=None, psx_undither=False, ps1_newemu=False, enable_swap=False, force_ntsc=False, planned_configs=None):
     #
     # This one is special since the same command may be used for other things
     # so we need to merge the argument if teh command is already there
@@ -3162,6 +3162,9 @@ def create_ps3(dest, disc_ids, real_disc_ids, game_title, icon0, pic0, pic1, cue
         return c
 
     print('Create PS3 PKG for', game_title) if verbose else None
+
+    if planned_configs is not None and len(planned_configs) != len(disc_ids):
+        raise ValueError('planned PS3 configs must match the disc count')
 
     if not no_libcrypt:
         try:
@@ -3195,19 +3198,23 @@ def create_ps3(dest, disc_ids, real_disc_ids, game_title, icon0, pic0, pic1, cue
             print('Found an external config ', real_cue_files[i][:-3]+'ps3config')
             with open(real_cue_files[i][:-3]+'ps3config', 'rb') as f:
                 f.seek(8)
-                configs[-1] = configs[-1] + f.read()
+                configs[i] = configs[i] + f.read()
         except:
             True
-        disc_id = real_disc_ids[i]
-        if disc_id in games and 'ps3config' in games[disc_id]:
-            print('Found an external config for', disc_id)
-            config_path = popfe_runtime.resource_path(
-                games[disc_id]['ps3config'],
-                required=True,
-            )
-            with open(config_path, 'rb') as f:
-                f.seek(8)
-                configs[i] = configs[i] + f.read()
+        if planned_configs is not None:
+            if planned_configs[i] is not None:
+                configs[i] = configs[i] + planned_configs[i]
+        else:
+            disc_id = real_disc_ids[i]
+            if disc_id in games and 'ps3config' in games[disc_id]:
+                print('Found an external config for', disc_id)
+                config_path = popfe_runtime.resource_path(
+                    games[disc_id]['ps3config'],
+                    required=True,
+                )
+                with open(config_path, 'rb') as f:
+                    f.seek(8)
+                    configs[i] = configs[i] + f.read()
 
 
     SECTLEN = 2352
@@ -3526,6 +3533,7 @@ def create_ps3(dest, disc_ids, real_disc_ids, game_title, icon0, pic0, pic1, cue
                 os.rmdir(f)
             except:
                 True
+    return dest
 
     
 def install_psp_mc(dest, game_id, mem_cards):

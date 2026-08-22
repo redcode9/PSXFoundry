@@ -50,8 +50,8 @@ def render_plan_report(plan):
     return "\n".join(lines) + "\n"
 
 
-def render_psp_workflow_report(plan):
-    """Render one per-disc PSP or Adrenaline workflow."""
+def render_target_workflow_report(plan):
+    """Render one per-disc target workflow."""
     lines = [
         "PSXFoundry conversion plan",
         f"Target: {plan.target}",
@@ -94,3 +94,8 @@ def render_psp_workflow_report(plan):
         lines.append("Unverified:")
         lines.extend(f"- {assumption}" for assumption in plan.assumptions)
     return "\n".join(lines) + "\n"
+
+
+def render_psp_workflow_report(plan):
+    """Render one PSP or Adrenaline workflow."""
+    return render_target_workflow_report(plan)

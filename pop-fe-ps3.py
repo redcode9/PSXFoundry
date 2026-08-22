@@ -15,8 +15,16 @@ import tkinter as tk
 import tkinter.ttk as ttk
 from tkinterdnd2 import *
 import zipfile
+from pathlib import Path
 from popfe_gui import install_tk_error_handler
 from popfe_runtime import runtime as popfe_runtime
+from psxfoundry.cache import AnalysisCache
+from psxfoundry.psp_workflow import (
+    build_target_plan,
+    read_ps3_configs,
+    verify_planned_patch_sources,
+)
+from psxfoundry.report import render_target_workflow_report
 
 
 have_pytube = False
@@ -29,7 +37,7 @@ except:
 from PIL import Image, ImageDraw
 from bchunk import bchunk
 import importlib  
-from gamedb import games, libcrypt, themes
+from gamedb import games, themes
 try:
     import popfe
 except:
@@ -91,6 +99,10 @@ class PopFePs3App:
         self.pic0xoffset = 0.1
         self.pic0yoffset = 0.1
         self.manual = None
+        self.conversion_plan = None
+        self.analysis_cache = AnalysisCache(
+            popfe_runtime.cache_dir / 'psxfoundry' / 'analysis'
+        )
         self.path_dir = (
             str(popfe_runtime.home)
             if popfe_runtime.is_macos
@@ -291,6 +303,28 @@ class PopFePs3App:
         self.builder.get_variable('pic0scaling_variable').set('')
         self.builder.get_variable('pic0xoffset_variable').set('')
         self.builder.get_variable('pic0yoffset_variable').set('')
+
+    def _refresh_conversion_plan(self):
+        if not self.cue_files:
+            self.conversion_plan = None
+            return None
+
+        plan = build_target_plan(
+            self.cue_files,
+            'ps3',
+            fallback_disc_ids=self.real_disc_ids,
+            analysis_cache=self.analysis_cache,
+        )
+        self.conversion_plan = plan
+        for idx, planned_id in enumerate(plan.output_disc_ids, start=1):
+            self.builder.get_variable('discid%d_variable' % idx).set(planned_id)
+        self.builder.get_variable('force_ntsc_variable').set(
+            'on' if plan.force_ntsc else 'off'
+        )
+        self.builder.get_variable('psx_undither_variable').set(
+            'on' if plan.undither else 'off'
+        )
+        return plan
 
     def update_preview(self):
         def has_transparency(img):
@@ -520,6 +554,7 @@ class PopFePs3App:
         elif disc == 'd5':
             self.builder.get_object('discid5', self.master).config(state='normal')
             self.builder.get_object('disc5', self.master).config(state='disabled')
+        self._refresh_conversion_plan()
         print('Finished processing disc') if verbose else None
         self.master.config(cursor='')
 
@@ -828,6 +863,7 @@ class PopFePs3App:
         elif popfe_runtime.is_macos:
             pkg = str(popfe_runtime.home / pkg)
         print('Creating ' + pkg)
+        plan = self._refresh_conversion_plan()
         disc_ids = []
         for idx in range(len(self.cue_files)):
             d = self.builder.get_variable('discid%d_variable' % (idx + 1)).get()
@@ -838,15 +874,15 @@ class PopFePs3App:
         print('DISC', disc_id)
         print('TITLE', title)
         resolution = 1
-        magic_word = []
-        subchannels = []
-        for idx in range(len(self.cue_files)):
-            if self.real_disc_ids[idx] in libcrypt:
-                magic_word.append(libcrypt[self.real_disc_ids[idx]]['magic_word'])
-                subchannels.append(popfe.generate_subchannels(libcrypt[self.real_disc_ids[idx]]['magic_word']))
-            else:
-                magic_word.append(0)
-                subchannels.append(None)
+        magic_word = [
+            disc.libcrypt_magic_word or 0 for disc in plan.discs
+        ]
+        subchannels = [
+            popfe.generate_subchannels(disc.libcrypt_magic_word)
+            if disc.libcrypt_magic_word is not None
+            else None
+            for disc in plan.discs
+        ]
                 
         if disc_id[:3] == 'SLE' or disc_id[:3] == 'SCE':
             print('SLES/SCES PAL game. Default resolution set to 2 (640x512)') if verbose else None
@@ -875,12 +911,17 @@ class PopFePs3App:
         else:
             manual = None
 
-        #
-        # Apply all PPF fixes we might need
-        #
-        self.cue_files, self.img_files = popfe.apply_ppf_fixes(self.real_disc_ids, self.cue_files, self.img_files, self.md5_sums, self.subdir)
+        verify_planned_patch_sources(plan, self.img_files)
+        working_cues, working_images = popfe.apply_planned_patches(
+            self.cue_files,
+            self.img_files,
+            tuple(disc.patches for disc in plan.discs),
+            self.subdir,
+        )
 
-        aea_files, extra_data_tracks = popfe.generate_aea_files(self.cue_files, self.img_files, self.subdir)
+        aea_files, extra_data_tracks = popfe.generate_aea_files(
+            working_cues, working_images, self.subdir
+        )
         if extra_data_tracks:
             self.data_track_only = 'on'
         
@@ -889,17 +930,23 @@ class PopFePs3App:
         swap     = self.builder.get_variable('allow_discswap_variable').get() == 'on'
         ntsc     = self.builder.get_variable('force_ntsc_variable').get() == 'on'
 
-        popfe.create_ps3(pkg, disc_ids, self.real_disc_ids, title,
+        output_path = popfe.create_ps3(pkg, disc_ids, self.real_disc_ids, title,
                          self.icon0 if self.icon0_disc=='off' else self.disc,
                          self.pic0 if self.pic0_disabled =='off' else None,
                          p1,
-                         self.cue_files, self.real_cue_files,
-                         self.img_files, [], aea_files, magic_word,
+                         working_cues, self.real_cue_files,
+                         working_images, [], aea_files, magic_word,
                          resolution, subdir=self.subdir, snd0=snd0,
                          subchannels=subchannels, manual=manual,
                          whole_disk=True if self.data_track_only=='off' else False,
                          psx_undither=undither,
-                         ps1_newemu=newemu, enable_swap=swap, force_ntsc=ntsc)
+                         ps1_newemu=newemu, enable_swap=swap, force_ntsc=ntsc,
+                         no_libcrypt=True,
+                         planned_configs=read_ps3_configs(plan))
+        Path(output_path).with_name('PSXFoundry-report.txt').write_text(
+            render_target_workflow_report(plan),
+            encoding='utf-8',
+        )
         self.master.config(cursor='')
 
         d = FinishedDialog(self.master)
