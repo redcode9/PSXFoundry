@@ -76,6 +76,7 @@ except:
 from cue import parse_ccd, parse_cue, ccd2cue, write_cue
 from popstation import popstation, GenerateSFO
 from psxfoundry.psp import lead_out_msf, track_end_offset, whole_disc_modes
+from psxfoundry.work import atomic_output, clone_or_copy
 from ppf import ApplyPPF
 from riff import copy_riff, create_riff, parse_riff
 try:
@@ -2448,13 +2449,7 @@ def add_image_text(image, title, game_id):
     return image
 
 def copy_file(inp, oup):
-    with open(inp, "rb") as i:
-        with open(oup, "wb") as o:
-            while True:
-                buf = i.read(1024*1024)
-                if len(buf) == 0:
-                    break
-                o.write(buf)
+    return clone_or_copy(inp, oup)
 
 
 def create_path(bin, f):
@@ -2888,9 +2883,11 @@ def generate_pbp(dest_file, disc_ids, game_title, icon0, pic0, pic1, cue_files, 
 
     p.striptracks = not all(whole_discs)
 
+    print('Create PBP file at', dest_file)
+    with atomic_output(dest_file) as staged_file:
+        p.eboot = str(staged_file)
+        p.create_pbp()
     p.eboot = dest_file
-    print('Create PBP file at', p.eboot)
-    p.create_pbp()
     try:
         os.sync()
     except:
