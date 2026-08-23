@@ -278,6 +278,7 @@ class MacOSBuildScriptTests(unittest.TestCase):
             REPOSITORY_ROOT / ".github" / "workflows" / "macos.yml"
         ).read_text(encoding="utf-8")
         self.assertIn("runs-on: macos-14", workflow)
+        self.assertIn("      - main", workflow)
         self.assertIn("submodules: recursive", workflow)
         self.assertIn("python-version: '3.12.13'", workflow)
         self.assertIn("architecture: arm64", workflow)
