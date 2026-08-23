@@ -28,7 +28,7 @@ jobs:
       - name: Set up ARM64 Python
         uses: actions/setup-python@v7
         with:
-          python-version: '3.12.13'
+          python-version: '3.12.10'
           architecture: arm64
           cache: pip
           cache-dependency-path: |

@@ -40,8 +40,8 @@ packaging/macos/smoke-apps.sh
 tests/integration/smoke-macos-conversions.sh build/macos/dist/psxfoundry
 ```
 
-Build the Apple Silicon release with the locked Python 3.12.13 interpreter and
-native helpers:
+Build the Apple Silicon release with native Python 3.12 and the locked helper
+revisions:
 
 ```sh
 git submodule update --init --recursive
