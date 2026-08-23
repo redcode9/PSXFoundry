@@ -7,6 +7,7 @@ from pathlib import Path
 from psxfoundry.popfe_registry import adapt_popfe
 from psxfoundry.registry import (
     CompatibilityAction,
+    CompatibilityAssetError,
     CompatibilityRegistry,
     CompatibilityRule,
     DiscIdentity,
@@ -143,8 +144,29 @@ class CatalogValidationTests(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            with self.assertRaisesRegex(RegistryError, "asset hash"):
+            with self.assertRaisesRegex(
+                CompatibilityAssetError,
+                "checksum does not match",
+            ):
                 load_registry(catalog_dir, root)
+
+    def test_can_defer_asset_checks_until_rule_selection(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            catalog_dir = root / "catalog"
+            catalog_dir.mkdir()
+            (catalog_dir / "rules.json").write_text(
+                json.dumps(self.catalog),
+                encoding="utf-8",
+            )
+
+            registry = load_registry(
+                catalog_dir,
+                root,
+                verify_assets=False,
+            )
+
+            self.assertTrue(registry.rules)
 
 
 class PopfeAdapterTests(unittest.TestCase):
@@ -207,6 +229,17 @@ class PopfeAdapterTests(unittest.TestCase):
             any(
                 issue.path == "pspconfigs/Jet Moto/SCES-00566.bin"
                 for issue in self.result.issues
+            )
+        )
+        rule = next(
+            rule
+            for rule in self.result.rules
+            if rule.match.disc_ids == ("SCES00566",) and "psp" in rule.targets
+        )
+        self.assertTrue(
+            any(
+                action.get("path") == "pspconfigs/Jet Moto/SCES-00566.bin"
+                for action in rule.actions
             )
         )
 

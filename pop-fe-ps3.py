@@ -15,7 +15,11 @@ import tkinter.ttk as ttk
 from tkinterdnd2 import *
 import zipfile
 from pathlib import Path
-from popfe_gui import FinishedDialog, install_tk_error_handler
+from popfe_gui import (
+    FinishedDialog,
+    confirm_conversion_without_fix,
+    install_tk_error_handler,
+)
 from popfe_runtime import runtime as popfe_runtime
 from psxfoundry.cache import AnalysisCache
 from psxfoundry.psp_workflow import (
@@ -23,6 +27,7 @@ from psxfoundry.psp_workflow import (
     read_ps3_configs,
 )
 from psxfoundry.report import render_target_workflow_report
+from psxfoundry.registry import CompatibilityAssetError
 
 
 have_pytube = False
@@ -289,16 +294,18 @@ class Ps3App:
         self.builder.get_variable('pic0xoffset_variable').set('')
         self.builder.get_variable('pic0yoffset_variable').set('')
 
-    def _refresh_conversion_plan(self):
+    def _refresh_conversion_plan(self, allow_missing_fixes=False):
         if not self.cue_files:
             self.conversion_plan = None
             return None
 
+        self.conversion_plan = None
         plan = build_target_plan(
             self.cue_files,
             'ps3',
             fallback_disc_ids=self.real_disc_ids,
             analysis_cache=self.analysis_cache,
+            allow_missing_fixes=allow_missing_fixes,
         )
         self.conversion_plan = plan
         for idx, planned_id in enumerate(plan.output_disc_ids, start=1):
@@ -310,6 +317,14 @@ class Ps3App:
             'on' if plan.undither else 'off'
         )
         return plan
+
+    def _refresh_conversion_plan_with_prompt(self):
+        try:
+            return self._refresh_conversion_plan()
+        except CompatibilityAssetError as error:
+            if not confirm_conversion_without_fix(self.master, error):
+                return None
+            return self._refresh_conversion_plan(allow_missing_fixes=True)
 
     def update_preview(self):
         def has_transparency(img):
@@ -539,7 +554,7 @@ class Ps3App:
         elif disc == 'd5':
             self.builder.get_object('discid5', self.master).config(state='normal')
             self.builder.get_object('disc5', self.master).config(state='disabled')
-        self._refresh_conversion_plan()
+        self._refresh_conversion_plan_with_prompt()
         print('Finished processing disc') if verbose else None
         self.master.config(cursor='')
 
@@ -848,7 +863,9 @@ class Ps3App:
         elif popfe_runtime.is_macos:
             pkg = str(popfe_runtime.home / pkg)
         print('Creating ' + pkg)
-        plan = self._refresh_conversion_plan()
+        plan = self.conversion_plan or self._refresh_conversion_plan_with_prompt()
+        if plan is None:
+            return
         disc_ids = []
         for idx in range(len(self.cue_files)):
             d = self.builder.get_variable('discid%d_variable' % (idx + 1)).get()

@@ -71,3 +71,21 @@ def install_tk_error_handler(
         )
 
     root.report_callback_exception = report_callback_exception
+
+
+def confirm_conversion_without_fix(parent, error) -> bool:
+    """Ask before omitting an unavailable compatibility fix."""
+    from tkinter import messagebox
+
+    return messagebox.askyesno(
+        "Compatibility fix unavailable",
+        (
+            f"{error}\n\n"
+            "Continuing without this fix may prevent the game from starting "
+            "or cause gameplay problems. PSXFoundry cannot guarantee the "
+            "result.\n\nContinue without this fix?"
+        ),
+        icon="warning",
+        default="no",
+        parent=parent,
+    )

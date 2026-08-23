@@ -41,7 +41,7 @@ def _asset_action(kind, relative, root, disc_id, issues):
     path = root / relative
     if not path.is_file():
         issues.append(AdapterIssue(disc_id, relative, "missing compatibility asset"))
-        return None
+        return CompatibilityAction(kind, (("path", relative),))
     return CompatibilityAction(
         kind,
         (("path", relative), ("sha256", file_sha256(path))),

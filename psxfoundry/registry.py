@@ -59,6 +59,26 @@ class RegistryError(ValueError):
     """Raised when registry data is invalid or ambiguous."""
 
 
+class CompatibilityAssetError(RegistryError):
+    """Raised when a selected compatibility fix cannot be used."""
+
+    def __init__(self, rule_id, action_kind, relative_path, reason):
+        self.rule_id = rule_id
+        self.action_kind = action_kind
+        self.relative_path = relative_path
+        self.reason = reason
+        super().__init__(
+            f"{rule_id} cannot use {action_kind} asset {relative_path}: {reason}"
+        )
+
+    @property
+    def skipped_warning(self):
+        return (
+            f"Skipped {self.action_kind} asset {self.relative_path}: "
+            f"{self.reason}; continued at user request"
+        )
+
+
 @dataclass(frozen=True)
 class RuleMatch:
     disc_ids: tuple[str, ...] = ()
@@ -403,19 +423,47 @@ def file_sha256(path):
     return digest.hexdigest()
 
 
+def resolve_action_asset(rule_id, action, asset_root):
+    """Return one verified action asset without allowing path traversal."""
+    relative = action.get("path")
+    if relative is None:
+        return None
+
+    relative_path = Path(relative)
+    if relative_path.is_absolute() or ".." in relative_path.parts:
+        raise RegistryError(
+            f"{rule_id} asset path escapes the repository: {relative}"
+        )
+
+    root = Path(asset_root).resolve()
+    path = (root / relative_path).resolve()
+    if not path.is_relative_to(root):
+        raise RegistryError(
+            f"{rule_id} asset path escapes the repository: {relative}"
+        )
+    if not path.is_file():
+        raise CompatibilityAssetError(
+            rule_id,
+            action.kind,
+            relative,
+            "file is missing",
+        )
+
+    expected = action.get("sha256")
+    if expected is not None and file_sha256(path) != expected:
+        raise CompatibilityAssetError(
+            rule_id,
+            action.kind,
+            relative,
+            "checksum does not match",
+        )
+    return path
+
+
 def verify_rule_assets(rule, asset_root):
     """Check every referenced rule asset and its declared digest."""
-    asset_root = Path(asset_root).resolve()
     for action in rule.actions:
-        relative = action.get("path")
-        expected = action.get("sha256")
-        if relative is None:
-            continue
-        path = (asset_root / relative).resolve()
-        if not path.is_relative_to(asset_root) or not path.is_file():
-            raise RegistryError(f"{rule.id} references missing asset {relative}")
-        if file_sha256(path) != expected:
-            raise RegistryError(f"{rule.id} asset hash does not match: {relative}")
+        resolve_action_asset(rule.id, action, asset_root)
 
 
 def _matches(rule_match, identity):
@@ -470,7 +518,7 @@ class CompatibilityRegistry:
         return winners[0]
 
 
-def load_registry(catalog_dir=None, asset_root=None):
+def load_registry(catalog_dir=None, asset_root=None, *, verify_assets=True):
     """Load all local catalogs in stable filename order."""
     repository_root = Path(__file__).resolve().parents[1]
     catalog_dir = Path(catalog_dir or repository_root / "compatibility" / "catalog")
@@ -482,7 +530,8 @@ def load_registry(catalog_dir=None, asset_root=None):
         except (OSError, json.JSONDecodeError) as error:
             raise RegistryError(f"cannot read {path}: {error}") from error
         catalog_rules = parse_catalog(data, str(path))
-        for rule in catalog_rules:
-            verify_rule_assets(rule, asset_root)
+        if verify_assets:
+            for rule in catalog_rules:
+                verify_rule_assets(rule, asset_root)
         rules.extend(catalog_rules)
     return CompatibilityRegistry(rules)

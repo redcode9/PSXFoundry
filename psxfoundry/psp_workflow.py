@@ -11,11 +11,12 @@ from psxfoundry.planner import ConversionPlan, plan_conversion
 from psxfoundry.popfe_registry import AdapterIssue, adapt_popfe
 from psxfoundry.psp import decoded_source_size, padded_decoded_size
 from psxfoundry.registry import (
-    CompatibilityAction,
+    CompatibilityAssetError,
     CompatibilityRegistry,
     RegistryError,
     file_sha256,
     load_registry,
+    resolve_action_asset,
 )
 
 
@@ -110,11 +111,12 @@ class TargetWorkflowPlan:
             for warning in disc.conversion.warnings
         ]
         disc_ids = {disc.description.disc_id for disc in self.discs}
-        warnings.extend(
-            f"{issue.disc_id}: {issue.message} ({issue.path})"
-            for issue in self.adapter_issues
-            if issue.disc_id in disc_ids
-        )
+        for issue in self.adapter_issues:
+            if issue.disc_id not in disc_ids:
+                continue
+            if any(issue.path in warning for warning in warnings):
+                continue
+            warnings.append(f"{issue.disc_id}: {issue.message} ({issue.path})")
         return tuple(dict.fromkeys(warnings))
 
     @property
@@ -132,6 +134,7 @@ def _combined_registry(resource_root):
     local = load_registry(
         Path(resource_root) / "compatibility" / "catalog",
         resource_root,
+        verify_assets=False,
     )
     adapted = adapt_popfe(resource_root)
     local_keys = {
@@ -160,18 +163,50 @@ def _single_action(actions, kind):
     return matches[0] if matches else None
 
 
-def _asset_path(action, resource_root):
+def _asset_path(action, resource_root, rule_id):
     if action is None:
         return None
-    root = Path(resource_root).resolve()
-    path = (root / action.get("path")).resolve()
-    if not path.is_relative_to(root) or not path.is_file():
-        raise RegistryError(f"missing compatibility asset {action.get('path')}")
-    return path
+    return resolve_action_asset(rule_id, action, resource_root)
 
 
-def _disc_plan(description, conversion, fallback_disc_id, resource_root):
+def _usable_conversion(conversion, resource_root, allow_missing_fixes):
+    actions = []
+    warnings = list(conversion.warnings)
+    for action in conversion.actions:
+        if action.get("path") is not None:
+            try:
+                resolve_action_asset(
+                    conversion.rule_id or "lossless-default",
+                    action,
+                    resource_root,
+                )
+            except CompatibilityAssetError as error:
+                if not allow_missing_fixes:
+                    raise
+                warnings.append(error.skipped_warning)
+                continue
+        actions.append(action)
+    return replace(
+        conversion,
+        actions=tuple(actions),
+        warnings=tuple(warnings),
+    )
+
+
+def _disc_plan(
+    description,
+    conversion,
+    fallback_disc_id,
+    resource_root,
+    allow_missing_fixes,
+):
+    conversion = _usable_conversion(
+        conversion,
+        resource_root,
+        allow_missing_fixes,
+    )
     actions = conversion.actions
+    rule_id = conversion.rule_id or "lossless-default"
     game_id = _single_action(actions, "set_game_id")
     output_disc_id = (
         game_id.get("value")
@@ -184,7 +219,7 @@ def _disc_plan(description, conversion, fallback_disc_id, resource_root):
     patches = tuple(
         PlannedPatch(
             action.kind,
-            _asset_path(action, resource_root),
+            _asset_path(action, resource_root, rule_id),
             action.get("sha256"),
         )
         for action in actions
@@ -203,7 +238,7 @@ def _disc_plan(description, conversion, fallback_disc_id, resource_root):
         conversion=conversion,
         output_disc_id=output_disc_id,
         patches=patches,
-        config_path=_asset_path(config, resource_root),
+        config_path=_asset_path(config, resource_root, rule_id),
         libcrypt_magic_word=(
             libcrypt.get("magic_word") if libcrypt is not None else None
         ),
@@ -230,6 +265,7 @@ def build_target_plan(
     adapter_issues=(),
     resource_root=None,
     analysis_cache=None,
+    allow_missing_fixes=False,
 ):
     """Analyze normalized disc paths and plan each target independently."""
     if target not in WORKFLOW_TARGETS:
@@ -261,7 +297,15 @@ def build_target_plan(
     for number, description in enumerate(descriptions):
         conversion = plan_conversion((description,), target, registry)
         fallback = fallback_disc_ids[number] if fallback_disc_ids else None
-        discs.append(_disc_plan(description, conversion, fallback, root))
+        discs.append(
+            _disc_plan(
+                description,
+                conversion,
+                fallback,
+                root,
+                allow_missing_fixes,
+            )
+        )
 
     title = next(
         (disc.description.title for disc in discs if disc.description.title),

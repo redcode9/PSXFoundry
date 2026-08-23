@@ -127,6 +127,15 @@ class RuntimePaths:
             if detected_frozen and detected_meipass is not None
             else source_root
         )
+        if (
+            detected_platform == "darwin"
+            and detected_frozen
+            and detected_executable.parent.name == "MacOS"
+        ):
+            bundle_contents = detected_executable.parent.parent
+            bundle_resources = bundle_contents / "Resources"
+            if bundle_contents.name == "Contents" and bundle_resources.is_dir():
+                resource_root = bundle_resources.resolve()
 
         return cls(
             platform=detected_platform,
@@ -249,8 +258,7 @@ class RuntimePaths:
         if self.is_macos and self.frozen and self.executable.parent.name == "MacOS":
             bundle_contents = self.executable.parent.parent.resolve()
             if bundle_contents.name == "Contents":
-                # PyInstaller stores data in Contents/Resources and exposes it
-                # through symlinks from sys._MEIPASS (Contents/Frameworks).
+                # PyInstaller links data and binaries across bundle directories.
                 allowed_roots.append(bundle_contents)
         if not any(
             candidate == allowed or allowed in candidate.parents

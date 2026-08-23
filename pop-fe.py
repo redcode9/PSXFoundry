@@ -4779,6 +4779,11 @@ if __name__ == "__main__":
                     help='Where the PS Classic/AutoBleem memory card is mounted')
     parser.add_argument('--no-libcrypt', action='store_true',
                     help='Do not patch libcrypt')
+    parser.add_argument(
+        '--allow-missing-fixes',
+        action='store_true',
+        help='Continue when a required compatibility fix is unavailable',
+    )
     parser.add_argument('--psx-undither', action='store_true',
                     help='Use PSX-Undither to reduce dithering')
     parser.add_argument('--fetch-metadata', action='store_true',
@@ -4953,9 +4958,14 @@ if __name__ == "__main__":
             target,
             fallback_disc_ids=real_disc_ids,
             analysis_cache=analysis_cache,
+            allow_missing_fixes=args.allow_missing_fixes,
         )
         for target in sorted(requested_targets)
     }
+    for target, plan in target_plans.items():
+        for warning in plan.warnings:
+            if "continued at user request" in warning:
+                print(f"WARNING [{target}]: {warning}")
 
     def output_disc_ids(plan):
         values = list(plan.output_disc_ids)

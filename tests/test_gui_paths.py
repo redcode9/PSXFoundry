@@ -2,9 +2,11 @@ import tempfile
 import unittest
 import xml.etree.ElementTree as ET
 from pathlib import Path
+from unittest.mock import patch
 
-from popfe_gui import write_exception_log
+from popfe_gui import confirm_conversion_without_fix, write_exception_log
 from popfe_runtime import RuntimePaths
+from psxfoundry.registry import CompatibilityAssetError
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
@@ -53,6 +55,22 @@ class GuiPathTests(unittest.TestCase):
             self.assertIn("conversion failed", contents)
             self.assertIn("RuntimeError", contents)
             self.assertIn("Platform: darwin", contents)
+
+    def test_missing_fix_confirmation_states_the_conversion_risk(self):
+        error = CompatibilityAssetError(
+            "test-rule",
+            "apply_ppf",
+            "fix.ppf",
+            "file is missing",
+        )
+        with patch("tkinter.messagebox.askyesno", return_value=True) as ask:
+            accepted = confirm_conversion_without_fix(None, error)
+
+        self.assertTrue(accepted)
+        message = ask.call_args.args[1]
+        self.assertIn("may prevent the game from starting", message)
+        self.assertIn("cannot guarantee the result", message)
+        self.assertEqual(ask.call_args.kwargs["default"], "no")
 
     def test_psp_gui_exposes_folder_and_manual_disc_import(self):
         ui = (REPOSITORY_ROOT / "pop-fe-psp.ui").read_text(encoding="utf-8")
@@ -111,6 +129,12 @@ class GuiPathTests(unittest.TestCase):
             with self.subTest(marker=marker):
                 self.assertIn(marker, source)
         self.assertNotIn("popfe.apply_ppf_fixes", source)
+
+    def test_cli_requires_an_explicit_missing_fix_override(self):
+        source = (REPOSITORY_ROOT / "pop-fe.py").read_text(encoding="utf-8")
+
+        self.assertIn("--allow-missing-fixes", source)
+        self.assertIn("allow_missing_fixes=args.allow_missing_fixes", source)
 
 
 if __name__ == "__main__":

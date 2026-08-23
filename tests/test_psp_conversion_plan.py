@@ -14,6 +14,7 @@ from psxfoundry.psp_workflow import (
 from psxfoundry.report import render_target_workflow_report
 from psxfoundry.registry import (
     CompatibilityAction,
+    CompatibilityAssetError,
     CompatibilityRegistry,
     CompatibilityRule,
     RuleMatch,
@@ -35,6 +36,16 @@ def rule(actions, *, disc_id="SCUS00001", target="psp"):
         sources=(RuleSource("Test", "https://example.com"),),
         credits=("Test",),
         tests=(),
+    )
+
+
+def asset_action(kind, path):
+    return CompatibilityAction(
+        kind,
+        (
+            ("path", path.name),
+            ("sha256", hashlib.sha256(path.read_bytes()).hexdigest()),
+        ),
     )
 
 
@@ -85,10 +96,7 @@ class PspConversionPlanTests(unittest.TestCase):
                 (
                     rule(
                         (
-                            CompatibilityAction(
-                                "set_pops_config",
-                                (("path", "profile.bin"), ("sha256", "0" * 64)),
-                            ),
+                            asset_action("set_pops_config", config),
                             CompatibilityAction(
                                 "set_game_id", (("value", "SCUS99999"),)
                             ),
@@ -111,6 +119,87 @@ class PspConversionPlanTests(unittest.TestCase):
                 (hashlib.sha256(disc.read_bytes()).hexdigest(),),
             )
 
+    def test_requires_explicit_consent_to_skip_a_missing_fix(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            disc = self.make_disc(root, "disc.bin", 0x34)
+            missing_config = CompatibilityAction(
+                "set_pops_config",
+                (("path", "missing.bin"), ("sha256", "0" * 64)),
+            )
+            registry = CompatibilityRegistry(
+                (
+                    rule(
+                        (
+                            missing_config,
+                            CompatibilityAction(
+                                "set_libcrypt",
+                                (("magic_word", 59176),),
+                            ),
+                        )
+                    ),
+                )
+            )
+
+            with self.assertRaisesRegex(
+                CompatibilityAssetError,
+                "file is missing",
+            ):
+                build_psp_plan(
+                    (disc,),
+                    fallback_disc_ids=("SCUS00001",),
+                    registry=registry,
+                    resource_root=root,
+                )
+
+            plan = build_psp_plan(
+                (disc,),
+                fallback_disc_ids=("SCUS00001",),
+                registry=registry,
+                resource_root=root,
+                allow_missing_fixes=True,
+            )
+
+            self.assertIsNone(plan.discs[0].config_path)
+            self.assertEqual(plan.discs[0].libcrypt_magic_word, 59176)
+            self.assertIn("continued at user request", plan.warnings[-1])
+            self.assertIn(
+                "continued at user request",
+                render_target_workflow_report(plan),
+            )
+
+    def test_rejects_a_fix_with_the_wrong_checksum(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            disc = self.make_disc(root, "disc.bin", 0x36)
+            (root / "profile.bin").write_bytes(b"profile")
+            registry = CompatibilityRegistry(
+                (
+                    rule(
+                        (
+                            CompatibilityAction(
+                                "set_pops_config",
+                                (
+                                    ("path", "profile.bin"),
+                                    ("sha256", "0" * 64),
+                                ),
+                            ),
+                        )
+                    ),
+                )
+            )
+
+            with self.assertRaisesRegex(
+                CompatibilityAssetError,
+                "checksum does not match",
+            ):
+                build_psp_plan(
+                    (disc,),
+                    fallback_disc_ids=("SCUS00001",),
+                    registry=registry,
+                    resource_root=root,
+                )
+
     def test_applies_effective_cdda_and_ntsc_config_bits(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -121,10 +210,7 @@ class PspConversionPlanTests(unittest.TestCase):
                 (
                     rule(
                         (
-                            CompatibilityAction(
-                                "set_pops_config",
-                                (("path", "profile.bin"), ("sha256", "0" * 64)),
-                            ),
+                            asset_action("set_pops_config", config),
                         )
                     ),
                 )
@@ -195,10 +281,7 @@ class PspConversionPlanTests(unittest.TestCase):
                         ),
                         targets=("psp",),
                         actions=(
-                            CompatibilityAction(
-                                "apply_ppf",
-                                (("path", "fix.ppf"), ("sha256", "0" * 64)),
-                            ),
+                            asset_action("apply_ppf", patch),
                         ),
                         sources=(RuleSource("Test", "https://example.com"),),
                         credits=("Test",),
@@ -227,10 +310,7 @@ class PspConversionPlanTests(unittest.TestCase):
                 (
                     rule(
                         (
-                            CompatibilityAction(
-                                "set_pops_config",
-                                (("path", "profile.bin"), ("sha256", "0" * 64)),
-                            ),
+                            asset_action("set_pops_config", config),
                         ),
                         target="ps3",
                     ),

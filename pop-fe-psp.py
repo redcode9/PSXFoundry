@@ -13,7 +13,11 @@ import tkinter.ttk as ttk
 import zipfile
 from pathlib import Path
 from tkinter import filedialog, messagebox
-from popfe_gui import FinishedDialog, install_tk_error_handler
+from popfe_gui import (
+    FinishedDialog,
+    confirm_conversion_without_fix,
+    install_tk_error_handler,
+)
 from popfe_psp_import import FolderImportError, scan_psp_folder
 from popfe_runtime import runtime as popfe_runtime
 from psxfoundry.cache import AnalysisCache
@@ -24,6 +28,7 @@ from psxfoundry.psp_workflow import (
     read_planned_configs,
 )
 from psxfoundry.report import render_target_workflow_report
+from psxfoundry.registry import CompatibilityAssetError
 from psxfoundry.validation import EbootExpectation, validate_generated_eboot
 
 have_pytube = False
@@ -468,17 +473,19 @@ class PspApp:
         selected = self.builder.get_variable('target_variable').get()
         return TARGET_VALUES.get(selected, 'psp')
 
-    def _refresh_conversion_plan(self):
+    def _refresh_conversion_plan(self, allow_missing_fixes=False):
         if not self.cue_files:
             self.conversion_plan = None
             self.builder.get_variable('plan_summary_variable').set('')
             return None
 
+        self.conversion_plan = None
         plan = build_psp_plan(
             self.cue_files,
             self._target(),
             fallback_disc_ids=self.real_disc_ids,
             analysis_cache=self.analysis_cache,
+            allow_missing_fixes=allow_missing_fixes,
         )
         self.conversion_plan = plan
         for idx, disc_id in enumerate(plan.output_disc_ids, start=1):
@@ -521,6 +528,14 @@ class PspApp:
         self.builder.get_variable('plan_summary_variable').set(summary)
         return plan
 
+    def _refresh_conversion_plan_with_prompt(self):
+        try:
+            return self._refresh_conversion_plan()
+        except CompatibilityAssetError as error:
+            if not confirm_conversion_without_fix(self.master, error):
+                return None
+            return self._refresh_conversion_plan(allow_missing_fixes=True)
+
     def on_target_selected(self, event=None):
         self.update_prefs()
         if not self.cue_files:
@@ -528,7 +543,7 @@ class PspApp:
         self.master.config(cursor='watch')
         self.master.update()
         try:
-            self._refresh_conversion_plan()
+            self._refresh_conversion_plan_with_prompt()
         except Exception as error:
             messagebox.showerror(
                 'Could not plan conversion', str(error), parent=self.master
@@ -623,7 +638,14 @@ class PspApp:
         self.master.config(cursor='watch')
         self.master.update()
         try:
-            self.load_disc(source_path, idx, fallback_title=fallback_title)
+            self.load_disc(
+                source_path,
+                idx,
+                fallback_title=fallback_title,
+                refresh_plan=False,
+            )
+            if self._refresh_conversion_plan_with_prompt() is None:
+                return False
         except Exception as error:
             messagebox.showerror('Could not load disc', str(error), parent=self.master)
             return False
@@ -689,7 +711,12 @@ class PspApp:
         parts.extend(result.warnings)
         self.builder.get_variable('import_summary_variable').set('  |  '.join(parts))
 
-    def import_folder(self, directory, import_all_discs=True):
+    def import_folder(
+        self,
+        directory,
+        import_all_discs=True,
+        prompt_for_missing_fix=False,
+    ):
         result = scan_psp_folder(
             directory,
             import_all_discs=import_all_discs,
@@ -704,7 +731,10 @@ class PspApp:
                 fallback_title=result.fallback_title if idx == 1 else None,
                 refresh_plan=False,
             )
-        self._refresh_conversion_plan()
+        if prompt_for_missing_fix:
+            self._refresh_conversion_plan_with_prompt()
+        else:
+            self._refresh_conversion_plan()
         self._set_folder_import_summary(result)
         self.update_prefs()
         return result
@@ -726,6 +756,7 @@ class PspApp:
                     self.builder.get_variable('import_all_discs_variable').get()
                     == 'on'
                 ),
+                prompt_for_missing_fix=True,
             )
         except FolderImportError as error:
             messagebox.showerror('Could not import folder', str(error), parent=self.master)
@@ -939,7 +970,9 @@ class PspApp:
         self.master.config(cursor='watch')
         self.master.update()
         try:
-            plan = self.conversion_plan or self._refresh_conversion_plan()
+            plan = self.conversion_plan or self._refresh_conversion_plan_with_prompt()
+            if plan is None:
+                return
             pkgdir = self.builder.get_variable('pkgdir_variable').get()
             title = self.builder.get_variable('title_variable').get()
             disc_ids = tuple(

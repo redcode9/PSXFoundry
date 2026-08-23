@@ -61,6 +61,9 @@ class RuntimePathsTests(unittest.TestCase):
             macos.mkdir()
             (resources / "pop-fe.ui").write_text("ui", encoding="utf-8")
             (frameworks / "pop-fe.ui").symlink_to("../Resources/pop-fe.ui")
+            (frameworks / "tools").mkdir()
+            (frameworks / "tools" / "helper").write_text("tool", encoding="utf-8")
+            (resources / "tools").symlink_to("../Frameworks/tools")
 
             runtime = self.make_runtime(
                 directory,
@@ -69,9 +72,14 @@ class RuntimePathsTests(unittest.TestCase):
                 executable=macos / "PSXFoundry",
             )
 
+            self.assertEqual(runtime.resource_root, resources.resolve())
             self.assertEqual(
                 runtime.resource_path("pop-fe.ui", required=True),
                 (resources / "pop-fe.ui").resolve(),
+            )
+            self.assertEqual(
+                runtime.resource_path("tools/helper", required=True),
+                (frameworks / "tools" / "helper").resolve(),
             )
 
     def test_resource_path_rejects_escape_and_reports_missing_resource(self):
