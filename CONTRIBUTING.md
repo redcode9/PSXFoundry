@@ -3,6 +3,32 @@
 Keep changes narrow and explain the observable result. Commit subjects should
 be short, declarative and free of process commentary.
 
+## Code structure
+
+Preserve the CLI, application behaviour and output formats. Internal Python
+interfaces may change when clearer boundaries reduce duplication.
+
+- Keep target planning, disc preparation and validation in focused
+  `psxfoundry` modules.
+- Share dialogs, artwork handling and conversion state between the PSP and PS3
+  applications.
+- Split conversion orchestration by phase and use descriptive function and
+  variable names.
+- Comment only constraints that the code cannot express, using short English
+  sentences.
+- Leave generated databases, compatibility data, patches and external
+  projects unchanged unless the task directly requires them.
+
+Both desktop applications use one window with the same layout: inputs and
+metadata on the left, preview and artwork on the right, and output controls in
+a stable footer. Advanced overrides stay collapsed by default. Every action
+uses a text label and conversions show progress without blocking the interface.
+
+Production code should shrink when a refactor removes duplication. Conversion
+orchestrators should delegate to short phase functions, and PSP/PS3 GUI clones
+belong in shared helpers. Release checks cover unit tests, both applications,
+the CLI, packaged conversions and the mounted DMG.
+
 ## Setup
 
 Clone submodules and use an isolated Python environment. Python 3.12 is the
