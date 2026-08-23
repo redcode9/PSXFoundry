@@ -298,6 +298,7 @@ class MacOSBuildScriptTests(unittest.TestCase):
         self.assertIn("packaging/macos/smoke-dmg.sh", workflow)
         self.assertIn("actions/upload-artifact@v7", workflow)
         self.assertIn("startsWith(github.ref, 'refs/tags/v')", workflow)
+        self.assertIn("GH_REPO: ${{ github.repository }}", workflow)
         self.assertIn("gh release upload", workflow)
 
     def test_conversion_smoke_covers_formats_and_cli_targets(self):
