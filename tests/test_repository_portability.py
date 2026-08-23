@@ -14,6 +14,34 @@ def portable_path_key(path):
 
 
 class RepositoryPortabilityTests(unittest.TestCase):
+    def test_public_documentation_replaces_internal_notes(self):
+        required = {
+            "README.md",
+            "COMPATIBILITY.md",
+            "CONTRIBUTING.md",
+            "THIRD_PARTY_NOTICES.md",
+        }
+        retired = {
+            "README",
+            "README.popstation",
+            "CREDITS.md",
+            "RULES.md",
+            "docs/macos-release-checklist.md",
+            "docs/macos.md",
+            "docs/psp-folder-import.md",
+            "docs/source-build.md",
+            "docs/superpowers",
+            "docs/tools.md",
+        }
+
+        self.assertFalse(
+            sorted(path for path in required if not (REPOSITORY_ROOT / path).is_file())
+        )
+        self.assertFalse(
+            sorted(path for path in retired if (REPOSITORY_ROOT / path).exists())
+        )
+        self.assertFalse((REPOSITORY_ROOT / "docs").exists())
+
     def test_tracked_paths_do_not_collide_when_case_folded(self):
         result = subprocess.run(
             ["git", "ls-files", "-z"],

@@ -2311,7 +2311,10 @@ def convert_snd0_to_at3(snd0, at3, duration, max_size, subdir = './'):
                 stdout=subprocess.DEVNULL,
             )
         except:
-            print('XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX\natracdenc not found.\nCan not create SND0.AT3\nPlease see README file for how to install atracdenc\nXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX')
+            print(
+                'ATRACDENC not found: cannot create SND0.AT3. '
+                'See docs/source-build.md for build requirements.'
+            )
             return None
         print('Converting EA3 to AT3 file') if verbose else None
         temp_files.append(at3)
@@ -4573,7 +4576,10 @@ def generate_aea_files(cue_files, img_files, subdir):
                     stdout=subprocess.DEVNULL,
                 )
             except:
-                print('XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX\natracdenc not found.\nCan not convert CDDA tracks.\nCreating EBOOT.PBP without support for CDDA audio.\nPlease see README file for how to install atracdenc\nXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX')
+                print(
+                    'ATRACDENC not found: creating EBOOT.PBP without CD audio. '
+                    'See docs/source-build.md for build requirements.'
+                )
                 break
             aea_files[d].append(aea_file)    
 
@@ -4607,7 +4613,10 @@ def process_disk_file(cue_file, idx, temp_files, subdir='./'):
                 check=True,
             )
         except:
-            print('XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX\nCHDMAN not found.\nCan not convert game\nPlease see README file for how to install chdman\nXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX')
+            print(
+                'CHDMan not found: cannot convert CHD input. '
+                'See docs/source-build.md for build requirements.'
+            )
             os._exit(10)
         cue_file = tmpcue
         # we didn't actually have a CUE file to start with so just
@@ -4664,7 +4673,7 @@ def process_disk_file(cue_file, idx, temp_files, subdir='./'):
         try:
             popfe_runtime.tool_path('binmerge', required=True)
         except:
-            raise Exception('binmerge is required in order to support multi-bin disks. See README file for instructions on how to install binmerge.')
+            raise Exception('binmerge is required for multi-bin discs. See docs/source-build.md for build requirements.')
         mb = 'MB%d' % (idx)
         temp_files.append(mb)
         subprocess.run(

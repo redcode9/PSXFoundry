@@ -1,4 +1,4 @@
-# Third-party software bundled with POP-FE
+# Third-party software bundled with PSXFoundry
 
 The macOS distribution contains separate helper executables built from the
 sources below.  Exact source revisions, archive checksums, and output names are
@@ -64,7 +64,8 @@ wheel into the `licenses/` directory of the applications and disk image.
 Build-only packages such as PyYAML, altgraph, and macholib are also pinned,
 and their license files are retained by the same collection step.
 
-POP-FE itself is distributed under the GNU Lesser General Public License 2.1.
+PSXFoundry is derived from POP-FE and is distributed under the GNU Lesser
+General Public License 2.1.
 License texts and copyright notices exposed by the pinned Python distributions
 are collected into the release at build time. The exact corresponding source
 code can be obtained from the URLs above and the immutable revisions in the
