@@ -61,11 +61,12 @@ jobs:
           assert tkinter.TkVersion >= 8.6
           PY
 
-      - name: Install workflow parser
+      - name: Install Python dependencies
         run: |
           python -m pip install \
             --constraint packaging/macos/requirements-constraints.txt \
-            --requirement packaging/macos/requirements-build.txt
+            --requirement packaging/macos/requirements-build.txt \
+            --requirement packaging/macos/requirements-runtime.txt
 
       - name: Validate workflow and run unit tests
         shell: bash

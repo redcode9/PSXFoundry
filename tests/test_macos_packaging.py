@@ -282,6 +282,7 @@ class MacOSBuildScriptTests(unittest.TestCase):
         self.assertIn("submodules: recursive", workflow)
         self.assertIn("python-version: '3.12.10'", workflow)
         self.assertIn("architecture: arm64", workflow)
+        self.assertIn("--requirement packaging/macos/requirements-runtime.txt", workflow)
         self.assertIn("packaging/macos/build-helpers.sh", workflow)
         self.assertIn("packaging/macos/build-apps.sh", workflow)
         self.assertIn("tests/integration/smoke-macos-conversions.sh", workflow)
