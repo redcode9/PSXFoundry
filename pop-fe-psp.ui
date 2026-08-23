@@ -1,8 +1,8 @@
-<?xml version='1.0' encoding='utf-8'?>
+<?xml version="1.0" encoding="utf-8"?>
 <interface version="1.4" author="PygubuDesigner 0.41.2">
   <project>
-    <settings />
-    <customwidgets />
+    <settings/>
+    <customwidgets/>
   </project>
   <object class="ttk.Frame" id="top_frame">
     <property name="height">200</property>
@@ -36,7 +36,7 @@
           <object class="pygubu.builder.widgets.pathchooserinput" id="dir_input">
             <property name="textvariable">string:pkgdir_variable</property>
             <property name="type">directory</property>
-            <bind sequence="&lt;&lt;PathChooserPathChanged&gt;&gt;" handler="on_dir_changed" add="" />
+            <bind sequence="&lt;&lt;PathChooserPathChanged&gt;&gt;" handler="on_dir_changed" add=""/>
             <layout manager="grid">
               <property name="column">1</property>
               <property name="row">0</property>
@@ -59,7 +59,7 @@
           <object class="ttk.Combobox" id="target">
             <property name="textvariable">string:target_variable</property>
             <property name="width">20</property>
-            <bind sequence="&lt;&lt;ComboboxSelected&gt;&gt;" handler="on_target_selected" add="" />
+            <bind sequence="&lt;&lt;ComboboxSelected&gt;&gt;" handler="on_target_selected" add=""/>
             <layout manager="grid">
               <property name="column">3</property>
               <property name="row">0</property>
@@ -102,7 +102,7 @@
         <child>
           <object class="ttk.Button" id="advanced_button">
             <property name="command" type="command" cbtype="simple">on_toggle_advanced</property>
-            <property name="text" translatable="yes">Advanced overrides...</property>
+            <property name="text" translatable="yes">Advanced settings...</property>
             <layout manager="pack">
               <property name="padx">8</property>
               <property name="side">left</property>
@@ -125,153 +125,337 @@
     </child>
     <child>
       <object class="ttk.Labelframe" id="frame4">
-        <property name="text" translatable="yes">Advanced overrides</property>
+        <property name="text" translatable="yes">Advanced settings</property>
         <layout manager="grid">
           <property name="column">0</property>
           <property name="columnspan">2</property>
           <property name="padx">12</property>
           <property name="pady">8</property>
           <property name="row">3</property>
-          <property name="sticky">w</property>
+          <property name="sticky">ew</property>
         </layout>
         <child>
-          <object class="ttk.Checkbutton" id="watermark">
-            <property name="command" type="command" cbtype="simple">on_watermark</property>
-            <property name="offvalue">off</property>
-            <property name="onvalue">on</property>
-            <property name="text" translatable="yes">Watermark in PIC1</property>
-            <property name="variable">string:watermark_variable</property>
+          <object class="ttk.Label" id="advanced_help">
+            <property name="text" translatable="yes">Automatic settings are recommended. Manual changes apply to the current conversion and may reduce compatibility.</property>
+            <property name="wraplength">720</property>
             <layout manager="grid">
-              <property name="column">1</property>
+              <property name="column">0</property>
+              <property name="columnspan">2</property>
               <property name="row">0</property>
               <property name="sticky">w</property>
             </layout>
           </object>
         </child>
         <child>
-          <object class="ttk.Checkbutton" id="disable_pic0">
-            <property name="command" type="command" cbtype="simple">on_pic0_disabled</property>
-            <property name="offvalue">off</property>
-            <property name="onvalue">on</property>
-            <property name="text" translatable="yes">Disable PIC0</property>
-            <property name="variable">string:pic0_disabled_variable</property>
+          <object class="ttk.Label" id="advanced_status">
+            <property name="textvariable">string:advanced_status_variable</property>
             <layout manager="grid">
               <property name="column">0</property>
-              <property name="row">0</property>
-              <property name="sticky">w</property>
-            </layout>
-          </object>
-        </child>
-        <child>
-          <object class="ttk.Checkbutton" id="disable_snd0">
-            <property name="command" type="command" cbtype="simple">on_snd0_disabled</property>
-            <property name="offvalue">off</property>
-            <property name="onvalue">on</property>
-            <property name="text" translatable="yes">Disable SND0</property>
-            <property name="variable">string:snd0_disabled_variable</property>
-            <layout manager="grid">
-              <property name="column">0</property>
-              <property name="row">2</property>
-              <property name="sticky">w</property>
-            </layout>
-          </object>
-        </child>
-        <child>
-          <object class="ttk.Checkbutton" id="use_cdda" named="True">
-            <property name="command" type="command" cbtype="simple">on_cdda</property>
-            <property name="offvalue">off</property>
-            <property name="onvalue">on</property>
-            <property name="text" translatable="yes">Use CDDA, not ATRAC3</property>
-            <property name="variable">string:cdda_variable</property>
-            <layout manager="grid">
-              <property name="column">1</property>
+              <property name="pady">6</property>
               <property name="row">1</property>
               <property name="sticky">w</property>
             </layout>
           </object>
         </child>
         <child>
-          <object class="ttk.Checkbutton" id="force_ntsc">
-            <property name="command" type="command" cbtype="simple">on_force_ntsc</property>
-            <property name="offvalue">off</property>
-            <property name="onvalue">on</property>
-            <property name="text" translatable="yes">Force NTSC</property>
-            <property name="variable">string:force_ntsc_variable</property>
+          <object class="ttk.Button" id="restore_automatic_button">
+            <property name="command" type="command" cbtype="simple">on_restore_automatic</property>
+            <property name="text" translatable="yes">Restore automatic settings</property>
             <layout manager="grid">
               <property name="column">1</property>
-              <property name="row">2</property>
-              <property name="sticky">w</property>
+              <property name="row">1</property>
+              <property name="sticky">e</property>
             </layout>
           </object>
         </child>
         <child>
-          <object class="ttk.Checkbutton" id="disable_pic1">
-            <property name="command" type="command" cbtype="simple">on_pic1_disabled</property>
-            <property name="offvalue">off</property>
-            <property name="onvalue">on</property>
-            <property name="text" translatable="yes">Disable PIC1</property>
-            <property name="variable">string:pic1_disabled_variable</property>
+          <object class="ttk.Labelframe" id="artwork_settings">
+            <property name="text" translatable="yes">Artwork and XMB</property>
             <layout manager="grid">
               <property name="column">0</property>
-              <property name="row">1</property>
-              <property name="sticky">w</property>
-            </layout>
-          </object>
-        </child>
-        <child>
-          <object class="ttk.Checkbutton" id="nopstitleimg">
-            <property name="command" type="command" cbtype="simple">on_nopstitleimg</property>
-            <property name="offvalue">off</property>
-            <property name="onvalue">on</property>
-            <property name="text" translatable="yes">Disable PSTITLEIMG</property>
-            <property name="variable">string:nopstitleimg_variable</property>
-            <layout manager="grid">
-              <property name="column">2</property>
-              <property name="row">0</property>
-              <property name="sticky">w</property>
-            </layout>
-          </object>
-        </child>
-        <child>
-          <object class="ttk.Checkbutton" id="pic1aslogo" named="True">
-            <property name="command" type="command" cbtype="simple">on_pic1aslogo</property>
-            <property name="offvalue">off</property>
-            <property name="onvalue">on</property>
-            <property name="text" translatable="yes">Use PIC1 as LOGO</property>
-            <property name="variable">string:pic1aslogo_variable</property>
-            <layout manager="grid">
-              <property name="column">2</property>
-              <property name="row">1</property>
-              <property name="sticky">w</property>
-            </layout>
-          </object>
-        </child>
-        <child>
-          <object class="ttk.Checkbutton" id="use_psx_undither" named="True">
-            <property name="command" type="command" cbtype="simple">on_psx_undither</property>
-            <property name="offvalue">off</property>
-            <property name="onvalue">on</property>
-            <property name="text" translatable="yes">Use PSX-Undither</property>
-            <property name="variable">string:psx_undither_variable</property>
-            <layout manager="grid">
-              <property name="column">2</property>
+              <property name="padx">0 6</property>
               <property name="row">2</property>
-              <property name="sticky">w</property>
+              <property name="sticky">nsew</property>
             </layout>
+            <child>
+              <object class="ttk.Checkbutton" id="watermark">
+                <property name="command" type="command" cbtype="simple">on_watermark</property>
+                <property name="offvalue">off</property>
+                <property name="onvalue">on</property>
+                <property name="text" translatable="yes">Add disc ID to background</property>
+                <property name="variable">string:watermark_variable</property>
+                <layout manager="grid">
+                  <property name="column">0</property>
+                  <property name="row">0</property>
+                  <property name="sticky">w</property>
+                </layout>
+              </object>
+            </child>
+            <child>
+              <object class="ttk.Label" id="watermark_help">
+                <property name="text" translatable="yes">Adds a small identifier to the XMB background.</property>
+                <property name="wraplength">320</property>
+                <layout manager="grid">
+                  <property name="column">0</property>
+                  <property name="padx">22 8</property>
+                  <property name="pady">0 7</property>
+                  <property name="row">1</property>
+                  <property name="sticky">w</property>
+                </layout>
+              </object>
+            </child>
+            <child>
+              <object class="ttk.Checkbutton" id="disable_pic0">
+                <property name="command" type="command" cbtype="simple">on_pic0_disabled</property>
+                <property name="offvalue">off</property>
+                <property name="onvalue">on</property>
+                <property name="text" translatable="yes">Hide game logo</property>
+                <property name="variable">string:pic0_disabled_variable</property>
+                <layout manager="grid">
+                  <property name="column">0</property>
+                  <property name="row">2</property>
+                  <property name="sticky">w</property>
+                </layout>
+              </object>
+            </child>
+            <child>
+              <object class="ttk.Label" id="disable_pic0_help">
+                <property name="text" translatable="yes">Removes the overlay logo shown on the XMB background (PIC0).</property>
+                <property name="wraplength">320</property>
+                <layout manager="grid">
+                  <property name="column">0</property>
+                  <property name="padx">22 8</property>
+                  <property name="pady">0 7</property>
+                  <property name="row">3</property>
+                  <property name="sticky">w</property>
+                </layout>
+              </object>
+            </child>
+            <child>
+              <object class="ttk.Checkbutton" id="disable_pic1">
+                <property name="command" type="command" cbtype="simple">on_pic1_disabled</property>
+                <property name="offvalue">off</property>
+                <property name="onvalue">on</property>
+                <property name="text" translatable="yes">Hide background image</property>
+                <property name="variable">string:pic1_disabled_variable</property>
+                <layout manager="grid">
+                  <property name="column">0</property>
+                  <property name="row">4</property>
+                  <property name="sticky">w</property>
+                </layout>
+              </object>
+            </child>
+            <child>
+              <object class="ttk.Label" id="disable_pic1_help">
+                <property name="text" translatable="yes">Removes the full-screen image shown when the game is selected (PIC1).</property>
+                <property name="wraplength">320</property>
+                <layout manager="grid">
+                  <property name="column">0</property>
+                  <property name="padx">22 8</property>
+                  <property name="pady">0 7</property>
+                  <property name="row">5</property>
+                  <property name="sticky">w</property>
+                </layout>
+              </object>
+            </child>
+            <child>
+              <object class="ttk.Checkbutton" id="disable_snd0">
+                <property name="command" type="command" cbtype="simple">on_snd0_disabled</property>
+                <property name="offvalue">off</property>
+                <property name="onvalue">on</property>
+                <property name="text" translatable="yes">Mute XMB preview music</property>
+                <property name="variable">string:snd0_disabled_variable</property>
+                <layout manager="grid">
+                  <property name="column">0</property>
+                  <property name="row">6</property>
+                  <property name="sticky">w</property>
+                </layout>
+              </object>
+            </child>
+            <child>
+              <object class="ttk.Label" id="disable_snd0_help">
+                <property name="text" translatable="yes">Omits the audio played while the game is highlighted (SND0).</property>
+                <property name="wraplength">320</property>
+                <layout manager="grid">
+                  <property name="column">0</property>
+                  <property name="padx">22 8</property>
+                  <property name="pady">0 7</property>
+                  <property name="row">7</property>
+                  <property name="sticky">w</property>
+                </layout>
+              </object>
+            </child>
+            <child>
+              <object class="ttk.Checkbutton" id="ntsc_u_icon0" named="True">
+                <property name="command" type="command" cbtype="simple">on_ntsc_u_icon0</property>
+                <property name="offvalue">off</property>
+                <property name="onvalue">on</property>
+                <property name="text" translatable="yes">Use North American icon frame</property>
+                <property name="variable">string:ntsc_u_icon0_variable</property>
+                <layout manager="grid">
+                  <property name="column">0</property>
+                  <property name="row">8</property>
+                  <property name="sticky">w</property>
+                </layout>
+              </object>
+            </child>
+            <child>
+              <object class="ttk.Label" id="ntsc_u_icon0_help">
+                <property name="text" translatable="yes">Frames a 60 × 67 cover in the North American PSN style.</property>
+                <property name="wraplength">320</property>
+                <layout manager="grid">
+                  <property name="column">0</property>
+                  <property name="padx">22 8</property>
+                  <property name="row">9</property>
+                  <property name="sticky">w</property>
+                </layout>
+              </object>
+            </child>
           </object>
         </child>
         <child>
-          <object class="ttk.Checkbutton" id="ntsc_u_icon0" named="True">
-            <property name="command" type="command" cbtype="simple">on_ntsc_u_icon0</property>
-            <property name="offvalue">off</property>
-            <property name="onvalue">on</property>
-            <property name="text" translatable="yes">NTSC-U style ICON0</property>
-            <property name="variable">string:ntsc_u_icon0_variable</property>
+          <object class="ttk.Labelframe" id="compatibility_settings">
+            <property name="text" translatable="yes">Compatibility</property>
             <layout manager="grid">
-              <property name="column">3</property>
-              <property name="row">0</property>
-              <property name="sticky">w</property>
+              <property name="column">1</property>
+              <property name="padx">6 0</property>
+              <property name="row">2</property>
+              <property name="sticky">nsew</property>
             </layout>
+            <child>
+              <object class="ttk.Checkbutton" id="use_cdda" named="True">
+                <property name="command" type="command" cbtype="simple">on_cdda</property>
+                <property name="offvalue">off</property>
+                <property name="onvalue">on</property>
+                <property name="text" translatable="yes">Keep raw CD audio</property>
+                <property name="variable">string:cdda_variable</property>
+                <layout manager="grid">
+                  <property name="column">0</property>
+                  <property name="row">0</property>
+                  <property name="sticky">w</property>
+                </layout>
+              </object>
+            </child>
+            <child>
+              <object class="ttk.Label" id="use_cdda_help">
+                <property name="text" translatable="yes">Uses CDDA instead of ATRAC3. Needed by some games, but can reduce compatibility.</property>
+                <property name="wraplength">320</property>
+                <layout manager="grid">
+                  <property name="column">0</property>
+                  <property name="padx">22 8</property>
+                  <property name="pady">0 7</property>
+                  <property name="row">1</property>
+                  <property name="sticky">w</property>
+                </layout>
+              </object>
+            </child>
+            <child>
+              <object class="ttk.Checkbutton" id="force_ntsc">
+                <property name="command" type="command" cbtype="simple">on_force_ntsc</property>
+                <property name="offvalue">off</property>
+                <property name="onvalue">on</property>
+                <property name="text" translatable="yes">Force 60 Hz output</property>
+                <property name="variable">string:force_ntsc_variable</property>
+                <layout manager="grid">
+                  <property name="column">0</property>
+                  <property name="row">2</property>
+                  <property name="sticky">w</property>
+                </layout>
+              </object>
+            </child>
+            <child>
+              <object class="ttk.Label" id="force_ntsc_help">
+                <property name="text" translatable="yes">Marks a PAL game as NTSC. Use only when a compatibility profile requires it.</property>
+                <property name="wraplength">320</property>
+                <layout manager="grid">
+                  <property name="column">0</property>
+                  <property name="padx">22 8</property>
+                  <property name="pady">0 7</property>
+                  <property name="row">3</property>
+                  <property name="sticky">w</property>
+                </layout>
+              </object>
+            </child>
+            <child>
+              <object class="ttk.Checkbutton" id="use_psx_undither" named="True">
+                <property name="command" type="command" cbtype="simple">on_psx_undither</property>
+                <property name="offvalue">off</property>
+                <property name="onvalue">on</property>
+                <property name="text" translatable="yes">Reduce color dithering</property>
+                <property name="variable">string:psx_undither_variable</property>
+                <layout manager="grid">
+                  <property name="column">0</property>
+                  <property name="row">4</property>
+                  <property name="sticky">w</property>
+                </layout>
+              </object>
+            </child>
+            <child>
+              <object class="ttk.Label" id="use_psx_undither_help">
+                <property name="text" translatable="yes">Patches supported games to reduce the original dithering pattern.</property>
+                <property name="wraplength">320</property>
+                <layout manager="grid">
+                  <property name="column">0</property>
+                  <property name="padx">22 8</property>
+                  <property name="pady">0 7</property>
+                  <property name="row">5</property>
+                  <property name="sticky">w</property>
+                </layout>
+              </object>
+            </child>
+            <child>
+              <object class="ttk.Checkbutton" id="nopstitleimg">
+                <property name="command" type="command" cbtype="simple">on_nopstitleimg</property>
+                <property name="offvalue">off</property>
+                <property name="onvalue">on</property>
+                <property name="text" translatable="yes">Use direct single-disc layout</property>
+                <property name="variable">string:nopstitleimg_variable</property>
+                <layout manager="grid">
+                  <property name="column">0</property>
+                  <property name="row">6</property>
+                  <property name="sticky">w</property>
+                </layout>
+              </object>
+            </child>
+            <child>
+              <object class="ttk.Label" id="nopstitleimg_help">
+                <property name="text" translatable="yes">Omits the PSTITLEIMG container. This is a diagnostic override, not a general fix.</property>
+                <property name="wraplength">320</property>
+                <layout manager="grid">
+                  <property name="column">0</property>
+                  <property name="padx">22 8</property>
+                  <property name="pady">0 7</property>
+                  <property name="row">7</property>
+                  <property name="sticky">w</property>
+                </layout>
+              </object>
+            </child>
+            <child>
+              <object class="ttk.Checkbutton" id="pic1aslogo" named="True">
+                <property name="command" type="command" cbtype="simple">on_pic1aslogo</property>
+                <property name="offvalue">off</property>
+                <property name="onvalue">on</property>
+                <property name="text" translatable="yes">Use background as startup logo</property>
+                <property name="variable">string:pic1aslogo_variable</property>
+                <layout manager="grid">
+                  <property name="column">0</property>
+                  <property name="row">8</property>
+                  <property name="sticky">w</property>
+                </layout>
+              </object>
+            </child>
+            <child>
+              <object class="ttk.Label" id="pic1aslogo_help">
+                <property name="text" translatable="yes">Replaces the standard POPS startup image with the selected background.</property>
+                <property name="wraplength">320</property>
+                <layout manager="grid">
+                  <property name="column">0</property>
+                  <property name="padx">22 8</property>
+                  <property name="row">9</property>
+                  <property name="sticky">w</property>
+                </layout>
+              </object>
+            </child>
           </object>
         </child>
       </object>
@@ -310,7 +494,7 @@
                 <child>
                   <object class="ttk.Label" id="label4">
                     <property name="text" translatable="yes">Preview:</property>
-                    <layout manager="pack" />
+                    <layout manager="pack"/>
                   </object>
                 </child>
                 <child>
@@ -319,7 +503,7 @@
                     <property name="borderwidth">1</property>
                     <property name="height">216</property>
                     <property name="width">384</property>
-                    <layout manager="pack" />
+                    <layout manager="pack"/>
                   </object>
                 </child>
               </object>
@@ -335,7 +519,7 @@
                 </layout>
                 <child>
                   <object class="ttk.Label" id="label6">
-                    <property name="text" translatable="yes">PIC0 Scale:</property>
+                    <property name="text" translatable="yes">Logo size:</property>
                     <layout manager="grid">
                       <property name="column">0</property>
                       <property name="row">0</property>
@@ -344,10 +528,21 @@
                   </object>
                 </child>
                 <child>
+                  <object class="ttk.Label" id="pic0scaling_help">
+                    <property name="text" translatable="yes">1.0 keeps the original size.</property>
+                    <layout manager="grid">
+                      <property name="column">0</property>
+                      <property name="columnspan">2</property>
+                      <property name="row">1</property>
+                      <property name="sticky">w</property>
+                    </layout>
+                  </object>
+                </child>
+                <child>
                   <object class="ttk.Entry" id="pic0scaling" named="True">
                     <property name="textvariable">string:pic0scaling_variable</property>
                     <property name="width">4</property>
-                    <bind sequence="&lt;KeyRelease&gt;" handler="on_pic0_scaling" add="" />
+                    <bind sequence="&lt;KeyRelease&gt;" handler="on_pic0_scaling" add=""/>
                     <layout manager="grid">
                       <property name="column">1</property>
                       <property name="row">0</property>
@@ -367,7 +562,7 @@
                 </layout>
                 <child>
                   <object class="ttk.Label" id="label7">
-                    <property name="text" translatable="yes">PIC0 X-Shift:</property>
+                    <property name="text" translatable="yes">Horizontal position:</property>
                     <layout manager="grid">
                       <property name="column">0</property>
                       <property name="row">0</property>
@@ -376,10 +571,21 @@
                   </object>
                 </child>
                 <child>
+                  <object class="ttk.Label" id="pic0xoffset_help">
+                    <property name="text" translatable="yes">Negative moves left; positive moves right.</property>
+                    <layout manager="grid">
+                      <property name="column">0</property>
+                      <property name="columnspan">2</property>
+                      <property name="row">1</property>
+                      <property name="sticky">w</property>
+                    </layout>
+                  </object>
+                </child>
+                <child>
                   <object class="ttk.Entry" id="pic0xoffset" named="True">
                     <property name="textvariable">string:pic0xoffset_variable</property>
                     <property name="width">4</property>
-                    <bind sequence="&lt;KeyRelease&gt;" handler="on_pic0_xoffset" add="" />
+                    <bind sequence="&lt;KeyRelease&gt;" handler="on_pic0_xoffset" add=""/>
                     <layout manager="grid">
                       <property name="column">1</property>
                       <property name="row">0</property>
@@ -399,7 +605,7 @@
                 </layout>
                 <child>
                   <object class="ttk.Label" id="label8">
-                    <property name="text" translatable="yes">PIC0 Y-Shift:</property>
+                    <property name="text" translatable="yes">Vertical position:</property>
                     <layout manager="grid">
                       <property name="column">0</property>
                       <property name="row">0</property>
@@ -408,10 +614,21 @@
                   </object>
                 </child>
                 <child>
+                  <object class="ttk.Label" id="pic0yoffset_help">
+                    <property name="text" translatable="yes">Negative moves up; positive moves down.</property>
+                    <layout manager="grid">
+                      <property name="column">0</property>
+                      <property name="columnspan">2</property>
+                      <property name="row">1</property>
+                      <property name="sticky">w</property>
+                    </layout>
+                  </object>
+                </child>
+                <child>
                   <object class="ttk.Entry" id="pic0yoffset" named="True">
                     <property name="textvariable">string:pic0yoffset_variable</property>
                     <property name="width">4</property>
-                    <bind sequence="&lt;KeyRelease&gt;" handler="on_pic0_yoffset" add="" />
+                    <bind sequence="&lt;KeyRelease&gt;" handler="on_pic0_yoffset" add=""/>
                     <layout manager="grid">
                       <property name="column">1</property>
                       <property name="row">0</property>
@@ -447,7 +664,7 @@
                     <property name="borderwidth">1</property>
                     <property name="height">80</property>
                     <property name="width">80</property>
-                    <bind sequence="&lt;ButtonPress&gt;" handler="on_icon0_clicked" add="" />
+                    <bind sequence="&lt;ButtonPress&gt;" handler="on_icon0_clicked" add=""/>
                     <layout manager="grid">
                       <property name="column">0</property>
                       <property name="row">1</property>
@@ -480,7 +697,7 @@
                     <property name="borderwidth">1</property>
                     <property name="height">80</property>
                     <property name="width">128</property>
-                    <bind sequence="&lt;ButtonPress&gt;" handler="on_pic0_clicked" add="" />
+                    <bind sequence="&lt;ButtonPress&gt;" handler="on_pic0_clicked" add=""/>
                     <layout manager="grid">
                       <property name="column">0</property>
                       <property name="row">1</property>
@@ -512,7 +729,7 @@
                     <property name="borderwidth">1</property>
                     <property name="height">80</property>
                     <property name="width">128</property>
-                    <bind sequence="&lt;ButtonPress&gt;" handler="on_pic1_clicked" add="" />
+                    <bind sequence="&lt;ButtonPress&gt;" handler="on_pic1_clicked" add=""/>
                     <layout manager="grid">
                       <property name="column">0</property>
                       <property name="row">1</property>
@@ -550,14 +767,14 @@
             <property name="height">200</property>
             <property name="padding">8</property>
             <property name="width">200</property>
-            <layout manager="pack" />
+            <layout manager="pack"/>
             <child>
               <object class="pygubu.builder.widgets.pathchooserinput" id="disc1">
                 <property name="state">disabled</property>
                 <property name="textvariable">string:disc1_variable</property>
                 <property name="title" translatable="yes">d1</property>
                 <property name="type">file</property>
-                <bind sequence="&lt;&lt;PathChooserPathChanged&gt;&gt;" handler="on_path_changed" add="" />
+                <bind sequence="&lt;&lt;PathChooserPathChanged&gt;&gt;" handler="on_path_changed" add=""/>
                 <layout manager="grid">
                   <property name="column">0</property>
                   <property name="row">4</property>
@@ -570,7 +787,7 @@
                 <property name="textvariable">string:disc2_variable</property>
                 <property name="title" translatable="yes">d2</property>
                 <property name="type">file</property>
-                <bind sequence="&lt;&lt;PathChooserPathChanged&gt;&gt;" handler="on_path_changed" add="" />
+                <bind sequence="&lt;&lt;PathChooserPathChanged&gt;&gt;" handler="on_path_changed" add=""/>
                 <layout manager="grid">
                   <property name="column">0</property>
                   <property name="row">5</property>
@@ -583,7 +800,7 @@
                 <property name="textvariable">string:disc3_variable</property>
                 <property name="title" translatable="yes">d3</property>
                 <property name="type">file</property>
-                <bind sequence="&lt;&lt;PathChooserPathChanged&gt;&gt;" handler="on_path_changed" add="" />
+                <bind sequence="&lt;&lt;PathChooserPathChanged&gt;&gt;" handler="on_path_changed" add=""/>
                 <layout manager="grid">
                   <property name="column">0</property>
                   <property name="row">6</property>
@@ -596,7 +813,7 @@
                 <property name="textvariable">string:disc4_variable</property>
                 <property name="title" translatable="yes">d4</property>
                 <property name="type">file</property>
-                <bind sequence="&lt;&lt;PathChooserPathChanged&gt;&gt;" handler="on_path_changed" add="" />
+                <bind sequence="&lt;&lt;PathChooserPathChanged&gt;&gt;" handler="on_path_changed" add=""/>
                 <layout manager="grid">
                   <property name="column">0</property>
                   <property name="row">7</property>
@@ -609,7 +826,7 @@
                 <property name="textvariable">string:disc5_variable</property>
                 <property name="title" translatable="yes">d5</property>
                 <property name="type">file</property>
-                <bind sequence="&lt;&lt;PathChooserPathChanged&gt;&gt;" handler="on_path_changed" add="" />
+                <bind sequence="&lt;&lt;PathChooserPathChanged&gt;&gt;" handler="on_path_changed" add=""/>
                 <layout manager="grid">
                   <property name="column">0</property>
                   <property name="row">8</property>
@@ -758,7 +975,7 @@
         <child>
           <object class="ttk.Separator" id="separator5">
             <property name="orient">horizontal</property>
-            <layout manager="pack" />
+            <layout manager="pack"/>
           </object>
         </child>
         <child>
@@ -766,7 +983,7 @@
             <property name="height">200</property>
             <property name="padding">8</property>
             <property name="width">200</property>
-            <layout manager="pack" />
+            <layout manager="pack"/>
             <child>
               <object class="ttk.Label" id="metadata_heading">
                 <property name="text" translatable="yes">Metadata and assets</property>
@@ -799,7 +1016,7 @@
                 </child>
                 <child>
                   <object class="ttk.Combobox" id="theme">
-                    <bind sequence="&lt;&lt;ComboboxSelected&gt;&gt;" handler="on_theme_selected" add="" />
+                    <bind sequence="&lt;&lt;ComboboxSelected&gt;&gt;" handler="on_theme_selected" add=""/>
                     <layout manager="grid">
                       <property name="column">1</property>
                       <property name="row">0</property>

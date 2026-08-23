@@ -129,6 +129,23 @@ class GuiPathTests(unittest.TestCase):
         source = (REPOSITORY_ROOT / "pop-fe-psp.py").read_text(encoding="utf-8")
         self.assertIn("get_object('frame4', self.master).grid_remove()", source)
 
+    def test_psp_gui_explains_and_resets_manual_settings(self):
+        ui = (REPOSITORY_ROOT / "pop-fe-psp.ui").read_text(encoding="utf-8")
+        source = (REPOSITORY_ROOT / "pop-fe-psp.py").read_text(encoding="utf-8")
+
+        for marker in (
+            "Automatic settings are recommended",
+            "Restore automatic settings",
+            "Keep raw CD audio",
+            "Use direct single-disc layout",
+            "Negative moves left; positive moves right",
+        ):
+            with self.subTest(marker=marker):
+                self.assertIn(marker, ui)
+        self.assertIn("def on_restore_automatic", source)
+        self.assertIn("render_workflow_summary", source)
+        self.assertNotIn("('undither', self.builder.get_variable", source)
+
     def test_ps3_gui_uses_target_specific_planning(self):
         source = (REPOSITORY_ROOT / "pop-fe-ps3.py").read_text(encoding="utf-8")
         for marker in (

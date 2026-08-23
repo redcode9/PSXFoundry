@@ -4,7 +4,6 @@ import argparse
 from dataclasses import dataclass
 import os
 import pygubu
-import pygubu.widgets.simpletooltip as tooltip
 import queue
 import re
 import shutil
@@ -32,7 +31,10 @@ from psxfoundry.psp_workflow import (
     expected_decoded_hashes,
     read_planned_configs,
 )
-from psxfoundry.report import render_target_workflow_report
+from psxfoundry.report import (
+    render_target_workflow_report,
+    render_workflow_summary,
+)
 from psxfoundry.registry import CompatibilityAssetError
 from psxfoundry.validation import EbootExpectation, validate_generated_eboot
 
@@ -70,6 +72,21 @@ TARGET_VALUES = {
     'PSP': 'psp',
     'PS Vita / Adrenaline': 'adrenaline',
 }
+ADVANCED_LABELS = {
+    'watermark': 'disc ID background',
+    'disable_pic0': 'hidden game logo',
+    'disable_pic1': 'hidden background image',
+    'disable_snd0': 'muted XMB music',
+    'ntsc_u_icon0': 'North American icon frame',
+    'cdda': 'raw CD audio',
+    'force_ntsc': 'forced 60 Hz output',
+    'undither': 'reduced color dithering',
+    'nopstitleimg': 'direct single-disc layout',
+    'pic1aslogo': 'background startup logo',
+    'pic0_scaling': 'logo size',
+    'pic0_xoffset': 'horizontal logo position',
+    'pic0_yoffset': 'vertical logo position',
+}
 
 
 @dataclass(frozen=True)
@@ -97,6 +114,7 @@ class PspConversionRequest:
     undither: bool
     force_ntsc: bool
     use_cdda: bool
+    manual_overrides: tuple[str, ...]
 
 
 class PspApp:
@@ -140,6 +158,7 @@ class PspApp:
         self.conversion_dialog = None
         self.conversion_events = None
         self.advanced_visible = False
+        self.advanced_overrides = set()
         self.analysis_cache = AnalysisCache(
             popfe_runtime.cache_dir / 'psxfoundry' / 'analysis'
         )
@@ -177,6 +196,7 @@ class PspApp:
             'on_ntsc_u_icon0': self.on_ntsc_u_icon0,
             'on_target_selected': self.on_target_selected,
             'on_toggle_advanced': self.on_toggle_advanced,
+            'on_restore_automatic': self.on_restore_automatic,
         }
 
         builder.connect_callbacks(callbacks)
@@ -187,38 +207,15 @@ class PspApp:
         )
         self.builder.get_variable('target_variable').set('PSP')
         self.builder.get_object('frame4', self.master).grid_remove()
+        for object_id in ('frame10', 'frame11', 'frame12'):
+            self.builder.get_object(object_id, self.master).grid_remove()
+        self.builder.get_object('frame4', self.master).columnconfigure(0, weight=1)
+        self.builder.get_object('frame4', self.master).columnconfigure(1, weight=1)
         for object_id in ('discs', 'separator5', 'frame1'):
             self.builder.get_object(object_id, self.master).pack_configure(fill='x')
         self.builder.get_object('output_frame', self.master).columnconfigure(
             1, weight=1
         )
-
-        self.use_psx_undither = builder.get_object("use_psx_undither")
-        tooltip.create(self.use_psx_undither, "Use PSX-Undither to patch the game.\nThis will remove dithering effects.")
-        self.pic1aslogo = builder.get_object("pic1aslogo")
-        tooltip.create(self.pic1aslogo , "Use pic1 as the LOGO instead of the default P.O.P.S logo")
-        self.nopstitleimg = builder.get_object("nopstitleimg")
-        tooltip.create(self.nopstitleimg , "Disable the use of PSTITLEIMG for single disc games.\nDo not use unless you know what this means.")
-        self.force_ntsc = builder.get_object("force_ntsc")
-        tooltip.create(self.force_ntsc , "Encode this game as NTSC even if it is actually PAL")
-        self.use_cdda = builder.get_object("use_cdda")
-        tooltip.create(self.use_cdda , "Use CDDA audio instead of the default ATRAC3 audio.\nDo not use this unless you need to as it reduces compatibility.\nV-Rally 2 needs this option.")
-        self.watermark = builder.get_object("watermark")
-        tooltip.create(self.watermark , "Put a small watermark containing the disc-id in the background image")
-        self.disable_snd0 = builder.get_object("disable_snd0")
-        tooltip.create(self.disable_snd0 , "Disable the SND0 audio that would play when the game icon is\nhighlighted on the XMB")
-        self.disable_pic1 = builder.get_object("disable_pic1")
-        tooltip.create(self.disable_pic1 , "Disable the background image shown when the game icon is highlighted on the XMB")
-        self.disable_pic0 = builder.get_object("disable_pic0")
-        tooltip.create(self.disable_pic0 , "Disable the game logo shown when the game icon is highlighted on the XMB")
-        self.pic0scaling = builder.get_object("pic0scaling")
-        tooltip.create(self.pic0scaling , "Change the scaling of the game logo.\n1.0 is 100% of original.\n0.5 is 50%, etc.")
-        self.pic0xoffset = builder.get_object("pic0xoffset")
-        tooltip.create(self.pic0xoffset , "Shift the placement of pic0 horizontally.\n0.1 means shift 10% to the right.\n-0.1 means shift 10% to the left.\nThe resulting image is bounded by the maximum size of the pic0 box.")
-        self.pic0yoffset = builder.get_object("pic0yoffset")
-        tooltip.create(self.pic0yoffset , "Shift the placement of pic0 vertically.\n0.1 means shift 10% down.\n-0.1 means shift 10% up.\nThe resulting image is bounded by the maximum size of the pic0 box.")
-        self.ntsc_u_icon0 = builder.get_object("ntsc_u_icon0")
-        tooltip.create(self.ntsc_u_icon0, "Use an NTSC-U PSN-style frame for ICON0.\nProvide a 60x67-pixel cover through the ICON0 control.")
 
         self._theme = ''
         o = ['']
@@ -244,6 +241,101 @@ class PspApp:
                 except:
                     True
         temp_files = []  
+
+    def _manual_override_labels(self):
+        return tuple(
+            label
+            for key, label in ADVANCED_LABELS.items()
+            if key in self.advanced_overrides
+        )
+
+    def _update_advanced_status(self):
+        labels = self._manual_override_labels()
+        status = (
+            'Manual changes: ' + ', '.join(labels)
+            if labels
+            else 'Mode: Automatic'
+        )
+        self.builder.get_variable('advanced_status_variable').set(status)
+        self.builder.get_object(
+            'restore_automatic_button', self.master
+        ).configure(state='normal' if labels else 'disabled')
+
+    def _update_plan_summary(self):
+        if self.conversion_plan is None:
+            self.builder.get_variable('plan_summary_variable').set('')
+            return
+        summary = render_workflow_summary(self.conversion_plan)
+        labels = self._manual_override_labels()
+        if labels:
+            summary += '\nManual changes: ' + ', '.join(labels)
+        self.builder.get_variable('plan_summary_variable').set(summary)
+
+    def _mark_advanced_override(self, name):
+        self.advanced_overrides.add(name)
+        self._update_advanced_status()
+        self._update_plan_summary()
+
+    def _automatic_logo_layout(self):
+        if self.disc_ids and self.disc_ids[0] in games:
+            game = games[self.disc_ids[0]]
+            scaling = game.get('pic0-scaling', 0.9)
+            xoffset, yoffset = game.get('pic0-offset', (0.1, 0.1))
+            return scaling, xoffset, yoffset
+        return 0.9, 0.1, 0.1
+
+    def _apply_automatic_settings(self, refresh_assets=False):
+        plan = self.conversion_plan
+        settings = {
+            'watermark_variable': 'on',
+            'pic0_disabled_variable': 'off',
+            'pic1_disabled_variable': 'off',
+            'snd0_disabled_variable': 'off',
+            'ntsc_u_icon0_variable': 'off',
+            'cdda_variable': 'on' if plan and plan.use_cdda else 'off',
+            'force_ntsc_variable': 'on' if plan and plan.force_ntsc else 'off',
+            'psx_undither_variable': 'on' if plan and plan.undither else 'off',
+            'nopstitleimg_variable': 'off',
+            'pic1aslogo_variable': 'off',
+        }
+        for variable, value in settings.items():
+            self.builder.get_variable(variable).set(value)
+
+        self.watermark = settings['watermark_variable']
+        self.pic0_disabled = settings['pic0_disabled_variable']
+        self.pic1_disabled = settings['pic1_disabled_variable']
+        self.snd0_disabled = settings['snd0_disabled_variable']
+        self.cdda = settings['cdda_variable']
+        self.nopstitleimg = settings['nopstitleimg_variable']
+        self.pic1aslogo = settings['pic1aslogo_variable']
+
+        self.pic0scaling, self.pic0xoffset, self.pic0yoffset = (
+            self._automatic_logo_layout()
+        )
+        self.builder.get_variable('pic0scaling_variable').set(self.pic0scaling)
+        self.builder.get_variable('pic0xoffset_variable').set(self.pic0xoffset)
+        self.builder.get_variable('pic0yoffset_variable').set(self.pic0yoffset)
+
+        self.advanced_overrides.clear()
+        self._update_advanced_status()
+        self._update_plan_summary()
+        if refresh_assets and self.disc_ids:
+            self.update_assets(update_pic0=False, update_pic1=False)
+
+    def _apply_plan_settings(self):
+        plan_settings = (
+            ('cdda', 'cdda_variable', self.conversion_plan.use_cdda),
+            ('force_ntsc', 'force_ntsc_variable', self.conversion_plan.force_ntsc),
+            ('undither', 'psx_undither_variable', self.conversion_plan.undither),
+        )
+        for name, variable, enabled in plan_settings:
+            if name not in self.advanced_overrides:
+                self.builder.get_variable(variable).set(
+                    'on' if enabled else 'off'
+                )
+        self.cdda = self.builder.get_variable('cdda_variable').get()
+        self._update_advanced_status()
+        self._update_plan_summary()
 
     def init_data(self):
         global temp_files
@@ -310,19 +402,11 @@ class PspApp:
         self.builder.get_variable('import_summary_variable').set('')
         self.builder.get_variable('plan_summary_variable').set('')
         self.conversion_plan = None
+        self._apply_automatic_settings()
 
     def update_prefs(self):
         PREFERENCES_PATH.parent.mkdir(parents=True, exist_ok=True)
         with open(PREFERENCES_PATH, "w") as f:
-            f.write('%s:%s\n' % ('undither', self.builder.get_variable('psx_undither_variable').get()))
-            f.write('%s:%s\n' % ('pic1aslogo', self.builder.get_variable('pic1aslogo_variable').get()))
-            f.write('%s:%s\n' % ('nopstitleimg', self.builder.get_variable('nopstitleimg_variable').get()))
-            f.write('%s:%s\n' % ('watermark', self.builder.get_variable('watermark_variable').get()))
-            f.write('%s:%s\n' % ('cdda', self.builder.get_variable('cdda_variable').get()))
-            f.write('%s:%s\n' % ('force_ntsc', self.builder.get_variable('force_ntsc_variable').get()))
-            f.write('%s:%s\n' % ('pic0_disabled', self.builder.get_variable('pic0_disabled_variable').get()))
-            f.write('%s:%s\n' % ('pic1_disabled', self.builder.get_variable('pic1_disabled_variable').get()))
-            f.write('%s:%s\n' % ('snd0_disabled', self.builder.get_variable('snd0_disabled_variable').get()))
             f.write('%s:%s\n' % ('target', self.builder.get_variable('target_variable').get()))
             f.write('%s:%s\n' % ('dir', self.builder.get_variable('pkgdir_variable').get()))
             if self.path_dir:
@@ -333,31 +417,6 @@ class PspApp:
         with open(PREFERENCES_PATH, "r") as f:
             for x in f.read().splitlines():
                 key, val = x.split(':', 1)
-                if key == 'undither':
-                    self.builder.get_variable('psx_undither_variable').set(val)
-                if key == 'pic1aslogo':
-                    self.builder.get_variable('pic1aslogo_variable').set(val)
-                    self.pic1aslogo = val
-                if key == 'nopstitleimg':
-                    self.builder.get_variable('nopstitleimg_variable').set(val)
-                    self.nopstitleimg = val
-                if key == 'watermark':
-                    self.builder.get_variable('watermark_variable').set(val)
-                    self.watermark = val
-                if key == 'cdda':
-                    self.builder.get_variable('cdda_variable').set(val)
-                    self.cdda = val
-                if key == 'force_ntsc':
-                    self.builder.get_variable('force_ntsc_variable').set(val)
-                if key == 'pic0_disabled':
-                    self.builder.get_variable('pic0_disabled_variable').set(val)
-                    self.disable_pic0 = val
-                if key == 'pic1_disabled':
-                    self.builder.get_variable('pic1_disabled_variable').set(val)
-                    self.disable_pic1 = val
-                if key == 'snd0_disabled':
-                    self.builder.get_variable('snd0_disabled_variable').set(val)
-                    self.disable_snd0 = val
                 if key == 'target' and val in TARGET_VALUES:
                     self.builder.get_variable('target_variable').set(val)
                 if key == 'dir':
@@ -524,42 +583,7 @@ class PspApp:
         self.conversion_plan = plan
         for idx, disc_id in enumerate(plan.output_disc_ids, start=1):
             self.builder.get_variable('discid%d_variable' % idx).set(disc_id)
-
-        self.cdda = 'on' if plan.use_cdda else 'off'
-        self.builder.get_variable('cdda_variable').set(self.cdda)
-        self.builder.get_variable('force_ntsc_variable').set(
-            'on' if plan.force_ntsc else 'off'
-        )
-        self.builder.get_variable('psx_undither_variable').set(
-            'on' if plan.undither else 'off'
-        )
-
-        profiles = tuple(
-            dict.fromkeys(
-                disc.conversion.rule_id or 'lossless default'
-                for disc in plan.discs
-            )
-        )
-        corrections = sum(
-            action.kind not in {'preserve_disc', 'set_compression'}
-            for disc in plan.discs
-            for action in disc.conversion.actions
-        )
-        target = 'PSP' if plan.target == 'psp' else 'PS Vita / Adrenaline'
-        summary = '%s  |  %d disc%s  |  %s  |  %d correction%s' % (
-            target,
-            len(plan.discs),
-            '' if len(plan.discs) == 1 else 's',
-            ', '.join(profiles),
-            corrections,
-            '' if corrections == 1 else 's',
-        )
-        if plan.warnings:
-            summary += '  |  %d warning%s' % (
-                len(plan.warnings),
-                '' if len(plan.warnings) == 1 else 's',
-            )
-        self.builder.get_variable('plan_summary_variable').set(summary)
+        self._apply_plan_settings()
         return plan
 
     def _refresh_conversion_plan_with_prompt(self):
@@ -588,13 +612,24 @@ class PspApp:
     def on_toggle_advanced(self):
         frame = self.builder.get_object('frame4', self.master)
         button = self.builder.get_object('advanced_button', self.master)
+        layout_frames = tuple(
+            self.builder.get_object(object_id, self.master)
+            for object_id in ('frame10', 'frame11', 'frame12')
+        )
         self.advanced_visible = not self.advanced_visible
         if self.advanced_visible:
             frame.grid()
-            button.configure(text='Hide advanced overrides')
+            for layout_frame in layout_frames:
+                layout_frame.grid()
+            button.configure(text='Hide advanced settings')
         else:
             frame.grid_remove()
-            button.configure(text='Advanced overrides...')
+            for layout_frame in layout_frames:
+                layout_frame.grid_remove()
+            button.configure(text='Advanced settings...')
+
+    def on_restore_automatic(self):
+        self._apply_automatic_settings(refresh_assets=True)
 
     def load_disc(self, source_path, idx, fallback_title=None, refresh_plan=True):
         if idx != len(self.cue_files) + 1 or idx > 5:
@@ -870,15 +905,15 @@ class PspApp:
 
     def on_nopstitleimg(self):
         self.nopstitleimg = self.builder.get_variable('nopstitleimg_variable').get()
-        self.update_prefs()
+        self._mark_advanced_override('nopstitleimg')
         
     def on_pic1aslogo(self):
         self.pic1aslogo = self.builder.get_variable('pic1aslogo_variable').get()
-        self.update_prefs()
+        self._mark_advanced_override('pic1aslogo')
         
     def on_watermark(self):
         self.watermark = self.builder.get_variable('watermark_variable').get()
-        self.update_prefs()
+        self._mark_advanced_override('watermark')
         
     def on_icon0_clicked(self, event):
         filetypes = [
@@ -897,17 +932,17 @@ class PspApp:
 
     def on_pic0_disabled(self):
         self.pic0_disabled = self.builder.get_variable('pic0_disabled_variable').get()
+        self._mark_advanced_override('disable_pic0')
         self.update_preview()
-        self.update_prefs()
 
     def on_pic1_disabled(self):
         self.pic1_disabled = self.builder.get_variable('pic1_disabled_variable').get()
+        self._mark_advanced_override('disable_pic1')
         self.update_preview()
-        self.update_prefs()
 
     def on_snd0_disabled(self):
         self.snd0_disabled = self.builder.get_variable('snd0_disabled_variable').get()
-        self.update_prefs()
+        self._mark_advanced_override('disable_snd0')
 
     def on_pic0_clicked(self, event):
         filetypes = [
@@ -955,8 +990,7 @@ class PspApp:
 
         if v > 0.1 and v != self.pic0scaling and self.disc_ids:
             self.pic0scaling = v
-            if self.disc_ids[0] in games:
-                games[self.disc_ids[0]]['pic0-scaling'] = self.pic0scaling
+            self._mark_advanced_override('pic0_scaling')
             self.update_preview()
 
     def on_pic0_xoffset(self, event):
@@ -965,10 +999,9 @@ class PspApp:
         except:
             return
 
-        if v >= 0.0 and v != self.pic0xoffset and self.disc_ids:
+        if v != self.pic0xoffset and self.disc_ids:
             self.pic0xoffset = v
-            if self.disc_ids[0] in games:
-                games[self.disc_ids[0]]['pic0-offset'] = (self.pic0xoffset, self.pic0yoffset)
+            self._mark_advanced_override('pic0_xoffset')
             self.update_preview()
             
     def on_pic0_yoffset(self, event):
@@ -977,10 +1010,9 @@ class PspApp:
         except:
             return
 
-        if v >= 0.0 and v != self.pic0yoffset and self.disc_ids:
+        if v != self.pic0yoffset and self.disc_ids:
             self.pic0yoffset = v
-            if self.disc_ids[0] in games:
-                games[self.disc_ids[0]]['pic0-offset'] = (self.pic0xoffset, self.pic0yoffset)
+            self._mark_advanced_override('pic0_yoffset')
             self.update_preview()
             
     def on_dir_changed(self, event):
@@ -1035,6 +1067,7 @@ class PspApp:
                 self.builder.get_variable('force_ntsc_variable').get() == 'on'
             ),
             use_cdda=self.builder.get_variable('cdda_variable').get() == 'on',
+            manual_overrides=self._manual_override_labels(),
         )
 
     def _create_eboot(self, request, set_phase):
@@ -1155,23 +1188,11 @@ class PspApp:
             report_path=report_path,
         )
         report = render_target_workflow_report(request.plan)
-        override_lines = []
+        override_lines = [
+            '- Manual settings: ' + ', '.join(request.manual_overrides)
+        ] if request.manual_overrides else []
         if request.disc_ids != request.plan.output_disc_ids:
             override_lines.append('- Disc IDs: ' + ', '.join(request.disc_ids))
-        if request.use_cdda != request.plan.use_cdda:
-            override_lines.append(
-                f'- CD audio: {"raw" if request.use_cdda else "ATRAC3"}'
-            )
-        if request.force_ntsc != request.plan.force_ntsc:
-            override_lines.append(
-                f'- Force NTSC: {"yes" if request.force_ntsc else "no"}'
-            )
-        if request.undither != request.plan.undither:
-            override_lines.append(
-                f'- Undither: {"yes" if request.undither else "no"}'
-            )
-        if request.disable_title_image:
-            override_lines.append('- PSTITLEIMG: disabled')
         overrides = 'Overrides:\n' + '\n'.join(
             override_lines or ['- None']
         ) + '\n'
@@ -1289,17 +1310,17 @@ class PspApp:
 
     def on_cdda(self):
         self.cdda = self.builder.get_variable('cdda_variable').get()
-        self.update_prefs()
+        self._mark_advanced_override('cdda')
 
     def on_force_ntsc(self):
-        self.update_prefs()
+        self._mark_advanced_override('force_ntsc')
 
     def on_psx_undither(self):
-        self.update_prefs()
+        self._mark_advanced_override('undither')
 
     def on_ntsc_u_icon0(self):
+        self._mark_advanced_override('ntsc_u_icon0')
         self.update_assets(update_pic0=False, update_pic1=False)
-        self.update_prefs()
 
 
 if __name__ == "__main__":
