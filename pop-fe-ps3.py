@@ -50,7 +50,7 @@ temp_files = []
 PROJECT_PATH = popfe_runtime.resource_root
 PROJECT_UI = popfe_runtime.resource_path("pop-fe-ps3.ui", required=True)
 PREFERENCES_PATH = popfe_runtime.application_preference_path(
-    "pop-fe-ps3.config"
+    "psxfoundry-ps3.config"
 )
 
 
@@ -93,7 +93,7 @@ class PopFePs3App:
         self.pkgdir = None
         self.data_track_only = 'off'
         self.subdir = str(
-            popfe_runtime.application_work_dir("ps3", "pop-fe-ps3-work")
+            popfe_runtime.application_work_dir("ps3", "psxfoundry-ps3-work")
         ) + os.sep
         self.pic0scaling = 0.9
         self.pic0xoffset = 0.1
@@ -965,14 +965,19 @@ if __name__ == "__main__":
     if args.v:
         verbose = True
 
-    smoke_test = os.environ.get("POPFE_GUI_SMOKE_TEST") == "1"
+    smoke_test = os.environ.get(
+        "PSXFOUNDRY_GUI_SMOKE_TEST",
+        os.environ.get("POPFE_GUI_SMOKE_TEST"),
+    ) == "1"
     root = TkinterDnD.Tk()
     if smoke_test:
         root.withdraw()
     if popfe_runtime.is_macos:
-        install_tk_error_handler(root, popfe_runtime, "ps3", "Pop-FE PS3 Error")
+        install_tk_error_handler(
+            root, popfe_runtime, "ps3", "PSXFoundry PS3 Error"
+        )
     app = PopFePs3App(root)
-    root.title('pop-fe PS3')
+    root.title('PSXFoundry PS3')
     if smoke_test:
         root.update_idletasks()
         root.destroy()

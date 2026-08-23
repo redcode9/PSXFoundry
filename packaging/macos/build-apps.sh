@@ -4,19 +4,19 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd -P)"
 REPOSITORY_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd -P)"
-BUILD_ROOT="${POPFE_BUILD_ROOT:-$REPOSITORY_ROOT/build/macos}"
-DIST_ROOT="${POPFE_DIST_ROOT:-$BUILD_ROOT/dist}"
+BUILD_ROOT="${PSXFOUNDRY_BUILD_ROOT:-${POPFE_BUILD_ROOT:-$REPOSITORY_ROOT/build/macos}}"
+DIST_ROOT="${PSXFOUNDRY_DIST_ROOT:-${POPFE_DIST_ROOT:-$BUILD_ROOT/dist}}"
 WORK_ROOT="$BUILD_ROOT/pyinstaller-work"
-VENV_ROOT="${POPFE_BUILD_VENV:-$BUILD_ROOT/app-venv}"
+VENV_ROOT="${PSXFOUNDRY_BUILD_VENV:-${POPFE_BUILD_VENV:-$BUILD_ROOT/app-venv}}"
 PYTHON_BIN="${PYTHON_BIN:-}"
-PYENV_BUILD_VERSION="${POPFE_PYENV_VERSION:-3.12.13}"
-ICON_PATH="$BUILD_ROOT/Pop-FE.icns"
-VERSION="${POPFE_VERSION:-0.0.0}"
+PYENV_BUILD_VERSION="${PSXFOUNDRY_PYENV_VERSION:-${POPFE_PYENV_VERSION:-3.12.13}}"
+ICON_PATH="$BUILD_ROOT/PSXFoundry.icns"
+VERSION="${PSXFOUNDRY_VERSION:-${POPFE_VERSION:-0.0.0}}"
 GENERATED_ROOT="$BUILD_ROOT/generated"
 LICENSE_ROOT="$BUILD_ROOT/licenses"
 
 say() {
-    printf '[pop-fe macOS] %s\n' "$*" >&2
+    printf '[PSXFoundry macOS] %s\n' "$*" >&2
 }
 
 fail() {
@@ -44,12 +44,15 @@ resolve_python() {
 }
 
 create_icon() {
-    local iconset="$BUILD_ROOT/Pop-FE.iconset"
-    local source="$BUILD_ROOT/Pop-FE-icon-source.png"
+    local iconset="$BUILD_ROOT/PSXFoundry.iconset"
+    local source="$BUILD_ROOT/PSXFoundry-icon-source.png"
+    local rendered="$BUILD_ROOT/PSXFoundry-mark.svg.png"
     rm -rf "$iconset"
     mkdir -p "$iconset"
-    cp "$REPOSITORY_ROOT/pop-fe-ps3.png" "$source"
-    sips --padToHeightWidth 1024 1024 --padColor FFFFFF "$source" >/dev/null
+    rm -f "$rendered" "$source"
+    qlmanage -t -s 1024 -o "$BUILD_ROOT" \
+        "$REPOSITORY_ROOT/packaging/assets/PSXFoundry-mark.svg" >/dev/null
+    mv "$rendered" "$source"
     for size in 16 32 128 256 512; do
         sips -z "$size" "$size" "$source" \
             --out "$iconset/icon_${size}x${size}.png" >/dev/null
@@ -78,12 +81,12 @@ if (
     raise SystemExit(1)
 PY
 
-for command in iconutil sips; do
+for command in iconutil qlmanage sips; do
     command -v "$command" >/dev/null || fail "required build command not found: $command"
 done
 
 [[ "$VERSION" =~ ^[0-9]+([.][0-9]+){1,2}$ ]] || fail \
-    'POPFE_VERSION must contain two or three numeric components (for example 1.2.0)'
+    'PSXFOUNDRY_VERSION must contain two or three numeric components (for example 1.2.0)'
 
 if [[ ! -x "$VENV_ROOT/bin/python3" ]]; then
     say "creating build environment from $PYTHON_BIN"
@@ -123,8 +126,8 @@ create_icon
 
 for spec in pop-fe-cli.spec pop-fe-psp.spec pop-fe-ps3.spec; do
     say "building $spec"
-    POPFE_VERSION="$VERSION" \
-    POPFE_ICON_PATH="$ICON_PATH" \
+    PSXFOUNDRY_VERSION="$VERSION" \
+    PSXFOUNDRY_ICON_PATH="$ICON_PATH" \
     PYINSTALLER_CONFIG_DIR="$BUILD_ROOT/pyinstaller-cache" \
         "$VENV_PYTHON" -m PyInstaller \
             --noconfirm \
@@ -134,6 +137,7 @@ for spec in pop-fe-cli.spec pop-fe-psp.spec pop-fe-ps3.spec; do
             "$SCRIPT_DIR/$spec"
 done
 
-rm -rf "$DIST_ROOT/Pop-FE PSP" "$DIST_ROOT/Pop-FE PS3"
+rm -rf "$DIST_ROOT/PSXFoundry PSP" "$DIST_ROOT/PSXFoundry PS3"
+ln -s psxfoundry "$DIST_ROOT/pop-fe"
 "$SCRIPT_DIR/verify-mach-o.sh" "$DIST_ROOT"
 say "applications staged in $DIST_ROOT"

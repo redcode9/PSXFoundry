@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <defs>
+    <mask id="disc-cutout">
+      <rect width="1024" height="1024" fill="#fff"/>
+      <path d="M480 886H544L570 976H454Z" fill="#000"/>
+    </mask>
+  </defs>
+  <g mask="url(#disc-cutout)">
+    <circle cx="512" cy="512" r="450" fill="#24272a"/>
+    <circle
+      cx="512"
+      cy="512"
+      r="416"
+      fill="none"
+      stroke="#f3ebdd"
+      stroke-width="34"
+    />
+  </g>
+  <path
+    d="M523 202A310 310 0 0 1 807 416"
+    fill="none"
+    stroke="#b66a3c"
+    stroke-width="54"
+  />
+  <path
+    d="M817 458A310 310 0 0 1 742 719"
+    fill="none"
+    stroke="#b66a3c"
+    stroke-width="54"
+  />
+  <circle cx="512" cy="512" r="122" fill="#f3ebdd"/>
+  <circle cx="512" cy="512" r="48" fill="#24272a"/>
+</svg>

@@ -5,12 +5,12 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd -P)"
 REPOSITORY_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd -P)"
 LOCK_FILE="$SCRIPT_DIR/dependencies.lock.json"
-BUILD_ROOT="${POPFE_BUILD_ROOT:-$REPOSITORY_ROOT/build/macos}"
-DOWNLOAD_ROOT="${POPFE_DOWNLOAD_ROOT:-$BUILD_ROOT/downloads}"
-STAGE_ROOT="${POPFE_HELPER_STAGE:-$BUILD_ROOT/helpers}"
+BUILD_ROOT="${PSXFOUNDRY_BUILD_ROOT:-${POPFE_BUILD_ROOT:-$REPOSITORY_ROOT/build/macos}}"
+DOWNLOAD_ROOT="${PSXFOUNDRY_DOWNLOAD_ROOT:-${POPFE_DOWNLOAD_ROOT:-$BUILD_ROOT/downloads}}"
+STAGE_ROOT="${PSXFOUNDRY_HELPER_STAGE:-${POPFE_HELPER_STAGE:-$BUILD_ROOT/helpers}}"
 PYTHON_BIN="${PYTHON_BIN:-}"
 JOBS="${JOBS:-}"
-ONLY="${POPFE_HELPERS_ONLY:-all}"
+ONLY="${PSXFOUNDRY_HELPERS_ONLY:-${POPFE_HELPERS_ONLY:-all}}"
 MINIMUM_MACOS="14.0"
 
 if [[ -z "$JOBS" ]]; then
@@ -18,7 +18,7 @@ if [[ -z "$JOBS" ]]; then
 fi
 
 say() {
-    printf '[pop-fe macOS] %s\n' "$*" >&2
+    printf '[PSXFoundry macOS] %s\n' "$*" >&2
 }
 
 fail() {

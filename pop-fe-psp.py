@@ -56,7 +56,7 @@ DISC_FILETYPES = [
 PROJECT_PATH = popfe_runtime.resource_root
 PROJECT_UI = popfe_runtime.resource_path("pop-fe-psp.ui", required=True)
 PREFERENCES_PATH = popfe_runtime.application_preference_path(
-    "pop-fe-psp.config"
+    "psxfoundry-psp.config"
 )
 TARGET_VALUES = {
     'PSP': 'psp',
@@ -101,7 +101,7 @@ class PopFePs3App:
         self.pic1_disabled = 'off'
         self.snd0_disabled = 'off'
         self.subdir = str(
-            popfe_runtime.application_work_dir("psp", "pop-fe-psp-work")
+            popfe_runtime.application_work_dir("psp", "psxfoundry-psp-work")
         ) + os.sep
         self.pic0scaling = 0.9
         self.pic0xoffset = 0.1
@@ -1152,26 +1152,37 @@ if __name__ == "__main__":
     if args.v:
         verbose = True
 
-    smoke_test = os.environ.get("POPFE_GUI_SMOKE_TEST") == "1"
+    smoke_test = os.environ.get(
+        "PSXFOUNDRY_GUI_SMOKE_TEST",
+        os.environ.get("POPFE_GUI_SMOKE_TEST"),
+    ) == "1"
     root = tk.Tk()
     if smoke_test:
         root.withdraw()
     if popfe_runtime.is_macos:
-        install_tk_error_handler(root, popfe_runtime, "psp", "Pop-FE PSP Error")
+        install_tk_error_handler(
+            root, popfe_runtime, "psp", "PSXFoundry PSP Error"
+        )
     app = PopFePs3App(root)
-    root.title('Pop-FE PSP')
+    root.title('PSXFoundry PSP')
     root.minsize(820, 560)
     root.rowconfigure(0, weight=1)
     root.columnconfigure(0, weight=1)
     app.mainwindow.columnconfigure(0, weight=1)
     app.mainwindow.columnconfigure(1, weight=1)
     if smoke_test:
-        import_directory = os.environ.get('POPFE_GUI_IMPORT_FOLDER')
+        import_directory = os.environ.get(
+            'PSXFOUNDRY_GUI_IMPORT_FOLDER',
+            os.environ.get('POPFE_GUI_IMPORT_FOLDER'),
+        )
         if import_directory:
             result = app.import_folder(
                 import_directory,
                 import_all_discs=(
-                    os.environ.get('POPFE_GUI_IMPORT_ALL_DISCS', '1') != '0'
+                    os.environ.get(
+                        'PSXFOUNDRY_GUI_IMPORT_ALL_DISCS',
+                        os.environ.get('POPFE_GUI_IMPORT_ALL_DISCS', '1'),
+                    ) != '0'
                 ),
             )
             print(

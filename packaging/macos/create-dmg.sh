@@ -4,15 +4,15 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd -P)"
 REPOSITORY_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd -P)"
-BUILD_ROOT="${POPFE_BUILD_ROOT:-$REPOSITORY_ROOT/build/macos}"
-DIST_ROOT="${POPFE_DIST_ROOT:-$BUILD_ROOT/dist}"
+BUILD_ROOT="${PSXFOUNDRY_BUILD_ROOT:-${POPFE_BUILD_ROOT:-$REPOSITORY_ROOT/build/macos}}"
+DIST_ROOT="${PSXFOUNDRY_DIST_ROOT:-${POPFE_DIST_ROOT:-$BUILD_ROOT/dist}}"
 STAGING_ROOT="$BUILD_ROOT/dmg-stage"
-PSP_APP="$DIST_ROOT/Pop-FE PSP.app"
-PS3_APP="$DIST_ROOT/Pop-FE PS3.app"
-CLI="$DIST_ROOT/pop-fe"
+PSP_APP="$DIST_ROOT/PSXFoundry PSP.app"
+PS3_APP="$DIST_ROOT/PSXFoundry PS3.app"
+CLI="$DIST_ROOT/psxfoundry"
 
 fail() {
-    printf '[pop-fe macOS] ERROR: %s\n' "$*" >&2
+    printf '[PSXFoundry macOS] ERROR: %s\n' "$*" >&2
     exit 1
 }
 
@@ -28,21 +28,22 @@ PSP_VERSION="$(plutil -extract CFBundleShortVersionString raw -o - \
 PS3_VERSION="$(plutil -extract CFBundleShortVersionString raw -o - \
     "$PS3_APP/Contents/Info.plist")"
 [[ "$PSP_VERSION" == "$PS3_VERSION" ]] || fail 'application versions do not match'
-VERSION="${POPFE_VERSION:-$PSP_VERSION}"
+VERSION="${PSXFOUNDRY_VERSION:-${POPFE_VERSION:-$PSP_VERSION}}"
 [[ "$VERSION" == "$PSP_VERSION" ]] || fail \
-    'POPFE_VERSION does not match the packaged applications'
+    'PSXFOUNDRY_VERSION does not match the packaged applications'
 [[ "$VERSION" =~ ^[0-9]+([.][0-9]+){1,2}$ ]] || fail 'invalid release version'
 
-DMG_PATH="$BUILD_ROOT/Pop-FE-$VERSION-macOS-arm64.dmg"
+DMG_PATH="$BUILD_ROOT/PSXFoundry-$VERSION-macOS-arm64.dmg"
 CHECKSUM_PATH="$DMG_PATH.sha256"
 
 "$SCRIPT_DIR/sign-apps.sh" "$DIST_ROOT"
 
 rm -rf "$STAGING_ROOT"
 mkdir -p "$STAGING_ROOT"
-ditto "$PSP_APP" "$STAGING_ROOT/Pop-FE PSP.app"
-ditto "$PS3_APP" "$STAGING_ROOT/Pop-FE PS3.app"
-ditto "$CLI" "$STAGING_ROOT/pop-fe"
+ditto "$PSP_APP" "$STAGING_ROOT/PSXFoundry PSP.app"
+ditto "$PS3_APP" "$STAGING_ROOT/PSXFoundry PS3.app"
+ditto "$CLI" "$STAGING_ROOT/psxfoundry"
+ln -s psxfoundry "$STAGING_ROOT/pop-fe"
 ditto "$SCRIPT_DIR/Install CLI.command" "$STAGING_ROOT/Install CLI.command"
 ditto "$SCRIPT_DIR/README-macOS.txt" "$STAGING_ROOT/README-macOS.txt"
 ditto "$REPOSITORY_ROOT/LICENCE-LGPL-2.1.txt" \
@@ -50,12 +51,12 @@ ditto "$REPOSITORY_ROOT/LICENCE-LGPL-2.1.txt" \
 ditto "$REPOSITORY_ROOT/THIRD_PARTY_NOTICES.md" \
     "$STAGING_ROOT/THIRD_PARTY_NOTICES.md"
 ditto "$BUILD_ROOT/licenses" "$STAGING_ROOT/licenses"
-chmod 755 "$STAGING_ROOT/pop-fe" "$STAGING_ROOT/Install CLI.command"
+chmod 755 "$STAGING_ROOT/psxfoundry" "$STAGING_ROOT/Install CLI.command"
 ln -s /Applications "$STAGING_ROOT/Applications"
 
 rm -f "$DMG_PATH" "$CHECKSUM_PATH"
 hdiutil create \
-    -volname "Pop-FE $VERSION" \
+    -volname "PSXFoundry $VERSION" \
     -srcfolder "$STAGING_ROOT" \
     -format UDZO \
     -imagekey zlib-level=9 \

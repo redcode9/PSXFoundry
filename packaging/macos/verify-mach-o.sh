@@ -8,7 +8,7 @@ if (( $# != 1 )); then
 fi
 
 INPUT="$1"
-MAXIMUM_MINIMUM_MACOS="${POPFE_MAXIMUM_MINIMUM_MACOS:-14.0}"
+MAXIMUM_MINIMUM_MACOS="${PSXFOUNDRY_MAXIMUM_MINIMUM_MACOS:-${POPFE_MAXIMUM_MINIMUM_MACOS:-14.0}}"
 if [[ -d "$INPUT" ]]; then
     ROOT="$(cd "$INPUT" && pwd -P)"
 elif [[ -f "$INPUT" ]]; then

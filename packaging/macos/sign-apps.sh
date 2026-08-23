@@ -4,13 +4,13 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd -P)"
 REPOSITORY_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd -P)"
-DIST_ROOT="${1:-${POPFE_DIST_ROOT:-$REPOSITORY_ROOT/build/macos/dist}}"
-CLI="$DIST_ROOT/pop-fe"
-PSP_APP="$DIST_ROOT/Pop-FE PSP.app"
-PS3_APP="$DIST_ROOT/Pop-FE PS3.app"
+DIST_ROOT="${1:-${PSXFOUNDRY_DIST_ROOT:-${POPFE_DIST_ROOT:-$REPOSITORY_ROOT/build/macos/dist}}}"
+CLI="$DIST_ROOT/psxfoundry"
+PSP_APP="$DIST_ROOT/PSXFoundry PSP.app"
+PS3_APP="$DIST_ROOT/PSXFoundry PS3.app"
 
 fail() {
-    printf '[pop-fe macOS] ERROR: %s\n' "$*" >&2
+    printf '[PSXFoundry macOS] ERROR: %s\n' "$*" >&2
     exit 1
 }
 

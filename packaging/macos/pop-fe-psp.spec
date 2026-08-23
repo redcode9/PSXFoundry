@@ -30,7 +30,7 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,
-    name="Pop-FE PSP",
+    name="PSXFoundry PSP",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -47,12 +47,12 @@ coll = COLLECT(
     a.datas,
     strip=False,
     upx=False,
-    name="Pop-FE PSP",
+    name="PSXFoundry PSP",
 )
 app = BUNDLE(
     coll,
-    name="Pop-FE PSP.app",
-    icon=os.environ["POPFE_ICON_PATH"],
-    bundle_identifier="io.github.sahlberg.pop-fe.psp",
-    info_plist=bundle_info("Pop-FE PSP"),
+    name="PSXFoundry PSP.app",
+    icon=os.environ["PSXFOUNDRY_ICON_PATH"],
+    bundle_identifier="io.github.redcode9.psxfoundry.psp",
+    info_plist=bundle_info("PSXFoundry PSP"),
 )

@@ -1,4 +1,4 @@
-"""Cross-platform runtime paths for source and packaged POP-FE builds."""
+"""Cross-platform runtime paths for source and packaged PSXFoundry builds."""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Callable, Mapping, Optional, Union
 
 
-APPLICATION_NAME = "Pop-FE"
+APPLICATION_NAME = "PSXFoundry"
 PathLike = Union[str, os.PathLike]
 
 
@@ -77,7 +77,7 @@ def _absolute_environment_path(
 
 @dataclass(frozen=True)
 class RuntimePaths:
-    """Resolved filesystem and executable locations for one POP-FE process."""
+    """Resolved filesystem and executable locations for one PSXFoundry process."""
 
     platform: str
     frozen: bool
@@ -106,6 +106,7 @@ class RuntimePaths:
         detected_frozen = (
             bool(getattr(sys, "frozen", False)) if frozen is None else frozen
         )
+        detected_environment = dict(os.environ if environ is None else environ)
         detected_source_file = _resolved(source_file or __file__)
         source_root = detected_source_file.parent
         detected_executable = Path(
@@ -113,9 +114,10 @@ class RuntimePaths:
                 os.path.expanduser(os.fspath(executable or sys.executable))
             )
         )
-        detected_home = _resolved(home or Path.home())
+        detected_home = _resolved(
+            home or detected_environment.get("PSXFOUNDRY_HOME") or Path.home()
+        )
         detected_cwd = _resolved(cwd or Path.cwd())
-        detected_environment = dict(os.environ if environ is None else environ)
 
         detected_meipass = meipass
         if detected_frozen and detected_meipass is None:
@@ -161,7 +163,7 @@ class RuntimePaths:
             "XDG_CONFIG_HOME",
             self.home / ".config",
         )
-        return root / "pop-fe"
+        return root / "psxfoundry"
 
     @property
     def log_dir(self) -> Path:
@@ -179,7 +181,7 @@ class RuntimePaths:
             "XDG_STATE_HOME",
             self.home / ".local" / "state",
         )
-        return root / "pop-fe"
+        return root / "psxfoundry"
 
     @property
     def cache_dir(self) -> Path:
@@ -197,7 +199,7 @@ class RuntimePaths:
             "XDG_CACHE_HOME",
             self.home / ".cache",
         )
-        return root / "pop-fe"
+        return root / "psxfoundry"
 
     @property
     def mounted_volume_root(self) -> Optional[Path]:
@@ -254,10 +256,10 @@ class RuntimePaths:
             candidate == allowed or allowed in candidate.parents
             for allowed in allowed_roots
         ):
-            raise ValueError("Resource path escapes the POP-FE resource directory")
+            raise ValueError("Resource path escapes the PSXFoundry resource directory")
         if required and not candidate.exists():
             raise MissingResourceError(
-                f"Required POP-FE resource is missing: {relative_path} "
+                f"Required PSXFoundry resource is missing: {relative_path} "
                 f"(expected at {candidate})"
             )
         return candidate
@@ -300,13 +302,13 @@ class RuntimePaths:
         candidate = _resolved(path)
         root = self.cache_dir.resolve()
         if candidate == root or root not in candidate.parents:
-            raise ValueError("Refusing to remove a directory outside the POP-FE cache")
+            raise ValueError("Refusing to remove a directory outside the PSXFoundry cache")
         shutil.rmtree(candidate, ignore_errors=True)
 
-    def new_log_path(self, component: str = "pop-fe") -> Path:
+    def new_log_path(self, component: str = "psxfoundry") -> Path:
         safe_component = re.sub(r"[^A-Za-z0-9._-]+", "-", component).strip("-.")
         if not safe_component:
-            safe_component = "pop-fe"
+            safe_component = "psxfoundry"
         self.log_dir.mkdir(parents=True, exist_ok=True)
         timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
         unique = uuid.uuid4().hex[:10]
@@ -370,7 +372,7 @@ class RuntimePaths:
         if required:
             searched_locations = ", ".join(str(path) for path in searched)
             raise MissingToolError(
-                f"Required POP-FE helper '{logical_name}' was not found or is not "
+                f"Required PSXFoundry helper '{logical_name}' was not found or is not "
                 f"executable. Searched: {searched_locations}"
             )
         return None

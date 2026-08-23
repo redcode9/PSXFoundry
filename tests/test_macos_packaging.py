@@ -150,8 +150,8 @@ class MacOSBuildScriptTests(unittest.TestCase):
 
     def test_gui_specs_are_arm64_macos_14_application_bundles(self):
         for filename, identifier in (
-            ("pop-fe-psp.spec", "io.github.sahlberg.pop-fe.psp"),
-            ("pop-fe-ps3.spec", "io.github.sahlberg.pop-fe.ps3"),
+            ("pop-fe-psp.spec", "io.github.redcode9.psxfoundry.psp"),
+            ("pop-fe-ps3.spec", "io.github.redcode9.psxfoundry.ps3"),
         ):
             source = (MACOS_PACKAGING / filename).read_text(encoding="utf-8")
             with self.subTest(spec=filename):
@@ -172,9 +172,10 @@ class MacOSBuildScriptTests(unittest.TestCase):
         self.assertIn("3.12.13", source)
         self.assertIn("import tkinter", source)
         self.assertIn("tkinter.TkVersion < 8.6", source)
-        self.assertIn('rm -rf "$DIST_ROOT/Pop-FE PSP"', source)
+        self.assertIn('rm -rf "$DIST_ROOT/PSXFoundry PSP"', source)
         self.assertIn("popfe_build_version.py", source)
-        self.assertIn('POPFE_VERSION="$VERSION"', source)
+        self.assertIn('PSXFOUNDRY_VERSION="$VERSION"', source)
+        self.assertIn("packaging/assets/PSXFoundry-mark.svg", source)
         self.assertIn("collect-licenses.py", source)
 
     def test_application_smoke_exercises_cli_both_guis_and_signatures(self):
@@ -183,14 +184,14 @@ class MacOSBuildScriptTests(unittest.TestCase):
         )
         self.assertIn('"$CLI" --help', source)
         self.assertIn('node" --version', source)
-        self.assertEqual(source.count("POPFE_GUI_SMOKE_TEST=1"), 2)
+        self.assertEqual(source.count("PSXFOUNDRY_GUI_SMOKE_TEST=1"), 2)
         self.assertEqual(source.count("codesign --verify --deep --strict"), 2)
 
     def test_psp_gui_smoke_supports_folder_import(self):
         source = (REPOSITORY_ROOT / "pop-fe-psp.py").read_text(
             encoding="utf-8"
         )
-        self.assertIn("POPFE_GUI_IMPORT_FOLDER", source)
+        self.assertIn("PSXFOUNDRY_GUI_IMPORT_FOLDER", source)
         self.assertIn("app.import_folder(", source)
 
     def test_cli_is_a_versioned_single_file_executable(self):
@@ -227,13 +228,24 @@ class MacOSBuildScriptTests(unittest.TestCase):
         self.assertIn('"$BUILD_ROOT/licenses"', create)
         self.assertIn("hdiutil attach", smoke)
         self.assertIn("hdiutil detach", smoke)
-        self.assertEqual(smoke.count("POPFE_GUI_SMOKE_TEST=1"), 2)
+        self.assertEqual(smoke.count("PSXFOUNDRY_GUI_SMOKE_TEST=1"), 2)
         self.assertIn("Privacy & Security", readme)
         self.assertIn("Open Anyway", readme)
         self.assertIn("support.apple.com/guide/mac-help", readme)
         self.assertNotIn("xattr", readme)
         self.assertIn("$HOME/.local/bin", installer)
         self.assertNotIn("sudo", installer)
+
+    def test_brand_mark_is_flat_and_uses_the_project_palette(self):
+        source = (
+            REPOSITORY_ROOT / "packaging" / "assets" /
+            "PSXFoundry-mark.svg"
+        ).read_text(encoding="utf-8")
+
+        for color in ("#24272a", "#f3ebdd", "#b66a3c"):
+            self.assertIn(color, source)
+        for forbidden in ("gradient", "filter", "text", "image"):
+            self.assertNotIn(f"<{forbidden}", source)
 
     def test_license_collector_retains_distribution_license_files(self):
         source = (MACOS_PACKAGING / "collect-licenses.py").read_text(
@@ -299,7 +311,7 @@ class MacOSBuildScriptTests(unittest.TestCase):
         ):
             with self.subTest(option=option):
                 self.assertIn(option, source)
-        self.assertIn('HOME="$TEST_HOME"', source)
+        self.assertIn('PSXFOUNDRY_HOME="$TEST_HOME"', source)
         self.assertIn("chmod 555", source)
 
     @staticmethod

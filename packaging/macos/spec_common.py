@@ -1,4 +1,4 @@
-"""Shared PyInstaller inputs for the macOS POP-FE distributions."""
+"""Shared PyInstaller inputs for the macOS PSXFoundry distributions."""
 
 from __future__ import annotations
 
@@ -35,8 +35,11 @@ def packaging_inputs(repository_root: Path, ui_file: str | None = None):
     """Return data, binaries, and hidden imports common to each target."""
     helper_root = Path(
         os.environ.get(
-            "POPFE_HELPER_STAGE",
-            repository_root / "build" / "macos" / "helpers",
+            "PSXFOUNDRY_HELPER_STAGE",
+            os.environ.get(
+                "POPFE_HELPER_STAGE",
+                repository_root / "build" / "macos" / "helpers",
+            ),
         )
     ).resolve()
     missing = [name for name in HELPER_NAMES if not (helper_root / name).is_file()]
@@ -77,11 +80,17 @@ def packaging_inputs(repository_root: Path, ui_file: str | None = None):
 
 
 def bundle_info(display_name: str):
-    version = os.environ.get("POPFE_VERSION", "0.0.0")
+    version = os.environ.get(
+        "PSXFOUNDRY_VERSION",
+        os.environ.get("POPFE_VERSION", "0.0.0"),
+    )
     return {
         "CFBundleDisplayName": display_name,
         "CFBundleShortVersionString": version,
-        "CFBundleVersion": os.environ.get("POPFE_BUILD_NUMBER", "1"),
+        "CFBundleVersion": os.environ.get(
+            "PSXFOUNDRY_BUILD_NUMBER",
+            os.environ.get("POPFE_BUILD_NUMBER", "1"),
+        ),
         "LSApplicationCategoryType": "public.app-category.utilities",
         "LSMinimumSystemVersion": "14.0",
         "LSArchitecturePriority": ["arm64"],

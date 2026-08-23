@@ -3114,7 +3114,7 @@ def create_psp(dest, disc_ids, real_disc_ids, game_title, icon0, pic0, pic1, cue
         print('3, Reconnect the PSP/VITA')
         print('4, Run this command to finish installing the memory cards:')
         print('')
-        print('./pop-fe.py --psp-dir=%s --disc_id=%s --psp-install-memory-card' % (dest, disc_ids[0]))
+        print('psxfoundry --psp-dir=%s --game_id=%s --psp-install-memory-card' % (dest, disc_ids[0]))
         print('###################################################')
         print('###################################################')
         try:
@@ -3847,7 +3847,7 @@ def get_disc_ids(cue_files, real_cue_files, subdir='./', is_psp=False):
 def install_deps():
     if popfe_runtime.frozen:
         raise RuntimeError(
-            'Packaged POP-FE builds already contain their dependencies and '
+            'Packaged PSXFoundry builds already contain their dependencies and '
             'cannot install or modify them at runtime.'
         )
     print(os.name)

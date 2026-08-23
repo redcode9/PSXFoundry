@@ -19,7 +19,7 @@ def write_exception_log(
     """Persist one GUI callback failure and return its diagnostic log path."""
     log_path = runtime.new_log_path(component)
     with open(log_path, "w", encoding="utf-8") as log:
-        log.write(f"POP-FE component: {component}\n")
+        log.write(f"PSXFoundry component: {component}\n")
         log.write(f"Platform: {runtime.platform}\n")
         log.write(f"Executable: {runtime.executable}\n\n")
         traceback.print_exception(

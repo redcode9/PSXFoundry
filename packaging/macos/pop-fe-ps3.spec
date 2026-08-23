@@ -30,7 +30,7 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,
-    name="Pop-FE PS3",
+    name="PSXFoundry PS3",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -47,12 +47,12 @@ coll = COLLECT(
     a.datas,
     strip=False,
     upx=False,
-    name="Pop-FE PS3",
+    name="PSXFoundry PS3",
 )
 app = BUNDLE(
     coll,
-    name="Pop-FE PS3.app",
-    icon=os.environ["POPFE_ICON_PATH"],
-    bundle_identifier="io.github.sahlberg.pop-fe.ps3",
-    info_plist=bundle_info("Pop-FE PS3"),
+    name="PSXFoundry PS3.app",
+    icon=os.environ["PSXFOUNDRY_ICON_PATH"],
+    bundle_identifier="io.github.redcode9.psxfoundry.ps3",
+    info_plist=bundle_info("PSXFoundry PS3"),
 )

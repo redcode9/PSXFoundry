@@ -52,7 +52,7 @@ class RuntimePathsTests(unittest.TestCase):
 
     def test_frozen_macos_resources_allow_pyinstaller_bundle_symlinks(self):
         with tempfile.TemporaryDirectory() as directory:
-            contents = Path(directory) / "Pop-FE.app" / "Contents"
+            contents = Path(directory) / "PSXFoundry.app" / "Contents"
             frameworks = contents / "Frameworks"
             resources = contents / "Resources"
             macos = contents / "MacOS"
@@ -66,7 +66,7 @@ class RuntimePathsTests(unittest.TestCase):
                 directory,
                 frozen=True,
                 meipass=frameworks,
-                executable=macos / "Pop-FE",
+                executable=macos / "PSXFoundry",
             )
 
             self.assertEqual(
@@ -90,36 +90,47 @@ class RuntimePathsTests(unittest.TestCase):
 
             self.assertEqual(
                 runtime.config_dir,
-                home / "Library" / "Application Support" / "Pop-FE",
+                home / "Library" / "Application Support" / "PSXFoundry",
             )
             self.assertEqual(
                 runtime.log_dir,
-                home / "Library" / "Logs" / "Pop-FE",
+                home / "Library" / "Logs" / "PSXFoundry",
             )
             self.assertEqual(
                 runtime.cache_dir,
-                home / "Library" / "Caches" / "Pop-FE",
+                home / "Library" / "Caches" / "PSXFoundry",
             )
             self.assertEqual(
-                runtime.preference_path("pop-fe-psp.config"),
-                runtime.config_dir / "pop-fe-psp.config",
+                runtime.preference_path("psxfoundry-psp.config"),
+                runtime.config_dir / "psxfoundry-psp.config",
             )
             self.assertEqual(
-                runtime.application_preference_path("pop-fe-psp.config"),
-                runtime.config_dir / "pop-fe-psp.config",
+                runtime.application_preference_path("psxfoundry-psp.config"),
+                runtime.config_dir / "psxfoundry-psp.config",
             )
+
+    def test_runtime_home_can_be_isolated_without_replacing_system_home(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            runtime = self.make_runtime(
+                directory,
+                home=None,
+                environ={"PSXFOUNDRY_HOME": str(root / "isolated")},
+            )
+
+            self.assertEqual(runtime.home, root / "isolated")
 
     def test_application_paths_preserve_legacy_non_macos_locations(self):
         with tempfile.TemporaryDirectory() as directory:
             runtime = self.make_runtime(directory, platform="linux")
 
             self.assertEqual(
-                runtime.application_preference_path("pop-fe-psp.config"),
-                runtime.cwd / "pop-fe-psp.config",
+                runtime.application_preference_path("psxfoundry-psp.config"),
+                runtime.cwd / "psxfoundry-psp.config",
             )
             self.assertEqual(
-                runtime.application_work_dir("psp", "pop-fe-psp-work"),
-                runtime.cwd / "pop-fe-psp-work",
+                runtime.application_work_dir("psp", "psxfoundry-psp-work"),
+                runtime.cwd / "psxfoundry-psp-work",
             )
 
     def test_macos_application_work_directory_is_unique_and_cached(self):
@@ -146,9 +157,9 @@ class RuntimePathsTests(unittest.TestCase):
                 },
             )
 
-            self.assertEqual(runtime.config_dir, root / "xdg-config" / "pop-fe")
-            self.assertEqual(runtime.log_dir, root / "xdg-state" / "pop-fe")
-            self.assertEqual(runtime.cache_dir, root / "xdg-cache" / "pop-fe")
+            self.assertEqual(runtime.config_dir, root / "xdg-config" / "psxfoundry")
+            self.assertEqual(runtime.log_dir, root / "xdg-state" / "psxfoundry")
+            self.assertEqual(runtime.cache_dir, root / "xdg-cache" / "psxfoundry")
 
     def test_work_directories_are_unique_and_cleaned_safely(self):
         with tempfile.TemporaryDirectory() as directory:
