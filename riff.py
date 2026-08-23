@@ -8,8 +8,60 @@
 # See https://github.com/GrapheneCt/ElevenMPV-A/blob/master/ElevenMPV-A/source/audio/at3.cpp for more complete parsing of EA3 files.
 #
 import argparse
-import os
 import struct
+
+
+class RiffFormatError(ValueError):
+    pass
+
+
+def _read_chunks(riff):
+    with open(riff, 'rb') as source:
+        data = source.read()
+
+    if len(data) < 12 or data[:4] != b'RIFF':
+        print('Not a RIFF File.')
+        return ()
+    if data[8:12] != b'WAVE':
+        print('Not a RIFF/WAVE File.')
+        return ()
+
+    declared_end = struct.unpack_from('<I', data, 4)[0] + 8
+    if declared_end < 12:
+        raise RiffFormatError('invalid RIFF container size')
+    if declared_end > len(data):
+        raise RiffFormatError('truncated RIFF container')
+
+    chunks = []
+    offset = 12
+    found_data = False
+    while offset < declared_end:
+        if declared_end - offset < 8:
+            if found_data:
+                break
+            raise RiffFormatError('truncated RIFF chunk header')
+
+        chunk_id = data[offset:offset + 4]
+        if any(value < 0x20 or value > 0x7E for value in chunk_id):
+            if found_data:
+                break
+            raise RiffFormatError('invalid RIFF chunk identifier')
+        name = chunk_id.decode('ascii')
+
+        size = struct.unpack_from('<I', data, offset + 4)[0]
+        payload_start = offset + 8
+        payload_end = payload_start + size
+        padded_end = payload_end + size % 2
+        if padded_end > declared_end:
+            if found_data:
+                break
+            raise RiffFormatError('truncated RIFF chunk')
+
+        chunks.append((name, data[payload_start:payload_end]))
+        found_data = found_data or name == 'data'
+        offset = padded_end
+
+    return tuple(chunks)
 
 
 def copy_riff(src, dst, max_duration_ms=0):
@@ -20,25 +72,22 @@ def copy_riff(src, dst, max_duration_ms=0):
         print('Not an uncompressed WAV file.')
         return
     
-    with open(src, 'rb') as i:
-        buf = i.read()
-        buf = buf[12:]
+    chunks = _read_chunks(src)
     with open(dst, 'wb') as o:
         o.write(b'RIFF\x00\x00\x00\x00WAVE')
-        while buf:
-            _len = struct.unpack_from('<I', buf, 4)[0]
-            _l = _len
-            _c = buf[:4].decode()
+        for _c, payload in chunks:
+            _l = len(payload)
             if _c == 'data' and max_duration_ms:
                 _sp = round(1000000000 / r['fmt ']['sample_rate'])
-                if len(buf) > int(max_duration_ms * 1000000 / _sp) * 4:
+                limit = int(max_duration_ms * 1000000 / _sp) * 4
+                if len(payload) > limit:
                     print('Clamping file to', max_duration_ms, 'ms')
-                    _l = int(max_duration_ms * 1000000 / _sp) * 4
-            _b = bytearray(buf[:8 + _l])
-            struct.pack_into('<I', _b, 4, _l)
-            o.write(_b)
-            _len = (_len + 1) & ~1  # chunks are 16 bit aligned
-            buf = buf[8 + _len:]
+                    _l = limit
+            o.write(_c.encode('ascii'))
+            o.write(struct.pack('<I', _l))
+            o.write(payload[:_l])
+            if _l % 2:
+                o.write(b'\x00')
 
         x = o.tell() - 8
         _b = bytearray(4)
@@ -48,27 +97,13 @@ def copy_riff(src, dst, max_duration_ms=0):
         
 
 def parse_riff(riff):
-    with open(riff, 'rb') as f:
-        buf = f.read()
-    if buf[:4] != b'RIFF':
-        print('Not a RIFF File.')
+    chunks = _read_chunks(riff)
+    if not chunks:
         return None
-    
-    _len = struct.unpack_from('<I', buf, 4)[0]
-    #if _len + 8 < os.stat(riff).st_size:
-    #    print('RIFF Header length invalid. Was', _len, 'but expected', os.stat(riff).st_size - 8)
-    #    return None
-    
-    if buf[8:12] != b'WAVE':
-        print('Not a RIFF/WAVE File.')
-        return None
-    
+
     result = {}
-    buf = buf[12:]
-    while buf:
-        _len = struct.unpack_from('<I', buf, 4)[0]
-        _c = buf[:4].decode()
-        _b = buf[8:8 + _len]
+    for _c, _b in chunks:
+        _len = len(_b)
         result[_c] = {'data': _b}
         if _c == 'fmt ':
             result[_c]['compression_code'] = struct.unpack_from('<H', _b, 0)[0]
@@ -113,9 +148,7 @@ def parse_riff(riff):
         elif _c == 'LIST':
             True
         else:
-            print('Unknown chunk type', buf[:4])
-        _len = (_len + 1) & ~1  # chunks are 16 bit aligned
-        buf = buf[8 + _len:]
+            print('Unknown chunk type', _c)
     return result
 
 def dump_riff(riff):
