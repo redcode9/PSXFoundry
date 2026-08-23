@@ -38,13 +38,13 @@ does not replace testing on real hardware.
 
 The catalog contains a `reported` rule for the European retail revision
 identified by SHA-1 and sector count, not just by `SCES-02834`. For PSP and
-Adrenaline it applies the matching binary patch, LibCrypt data and POPS
-configuration.
+Adrenaline it applies the matching binary patch and POPS configuration. Exact
+LibCrypt records come from a validated local, cached or downloaded SBI file.
 
 PSXFoundry does not copy a boot file from Spyro or any other game. Substituting
 copyrighted files from another title is not a safe or redistributable fix. For
-an unknown revision, PSXFoundry keeps the serial-level LibCrypt and POPS setup,
-skips the binary patch and warns the user.
+an unknown revision, PSXFoundry still validates SBI data for the serial, keeps
+the POPS setup, skips the binary patch and warns the user.
 
 ## Reporting a result
 
@@ -67,7 +67,7 @@ Catalogs live in `compatibility/catalog` and follow
 multidisc arrays must describe the discs in order. A binary patch requires an
 exact source hash.
 
-Rules may preserve a disc, apply a PPF or Xdelta file, generate LibCrypt data,
+Rules may preserve a disc, apply a PPF or Xdelta file, require LibCrypt data,
 insert a POPS configuration, override game ID or region, select audio and
 compression, require a PopsLoader version, or set undithering. Referenced files
 must be redistributable, stay inside the repository and include their SHA-256.

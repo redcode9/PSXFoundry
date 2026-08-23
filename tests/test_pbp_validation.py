@@ -156,6 +156,7 @@ class PbpValidationTests(unittest.TestCase):
                 tocs=(inspect_pbp(eboot).discs[0].toc,),
                 configs=(b"\x01\x55\xaa",),
                 subchannel_records=(2,),
+                subchannel_sha256=(hashlib.sha256(bytes([1]) * 24).hexdigest(),),
             )
 
             result = validate_eboot(eboot, expectation)
@@ -174,6 +175,19 @@ class PbpValidationTests(unittest.TestCase):
 
             self.assertFalse(result.ok)
             self.assertIn("disc 1 size", result.errors[0])
+
+    def test_reports_subchannel_content_mismatch(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = bytes([0x67]) * PSISO_BLOCK_SIZE
+            eboot, _, _ = self.build_eboot(directory, [source])
+
+            result = validate_eboot(
+                eboot,
+                EbootExpectation(subchannel_sha256=("0" * 64,)),
+            )
+
+            self.assertFalse(result.ok)
+            self.assertIn("subchannel data does not match", result.errors[0])
 
     def test_removes_only_invalid_output_and_keeps_report(self):
         with tempfile.TemporaryDirectory() as directory:

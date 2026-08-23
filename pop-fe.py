@@ -87,6 +87,7 @@ from psxfoundry.psp_workflow import (
 )
 from psxfoundry.report import render_target_workflow_report
 from psxfoundry.registry import file_sha256
+from psxfoundry.sbi import SbiSelection, load_sbi, resolve_sbi
 from psxfoundry.validation import validate_eboot, validate_generated_eboot
 from psxfoundry.work import atomic_output, clone_or_copy
 from ppf import ApplyPPF
@@ -2602,7 +2603,14 @@ def get_imgs_from_bin(cue):
     return img_files
 
 
-def create_retroarch_bin(dest, game_title, cue_files, img_files, magic_word=()):
+def create_retroarch_bin(
+    dest,
+    game_title,
+    cue_files,
+    img_files,
+    magic_word=(),
+    sbi_files=(),
+):
     try:
         os.mkdir(dest)
     except:
@@ -2616,11 +2624,20 @@ def create_retroarch_bin(dest, game_title, cue_files, img_files, magic_word=()):
             f = dest + '/' + g
             print('Installing', f) if verbose else None
             copy_file(img_files[i], f)
-            if i < len(magic_word) and magic_word[i]:
+            if i < len(sbi_files) and sbi_files[i]:
+                copy_file(sbi_files[i], dest + '/' + g[:-4] + '.sbi')
+            elif i < len(magic_word) and magic_word[i]:
                 create_sbi(dest + '/' + g[:-4] + '.sbi', magic_word[i])
             
 
-def create_retroarch_cue(dest, game_title, cue_files, img_files, magic_word):
+def create_retroarch_cue(
+    dest,
+    game_title,
+    cue_files,
+    img_files,
+    magic_word,
+    sbi_files=(),
+):
     try:
         os.mkdir(dest)
     except:
@@ -2641,7 +2658,9 @@ def create_retroarch_cue(dest, game_title, cue_files, img_files, magic_word):
                 b = dest + '/' + p + '.bin'
                 print('Installing', b) if verbose else None
                 copy_file(img_files[i], b)
-            if i < len(magic_word) and magic_word[i]:
+            if i < len(sbi_files) and sbi_files[i]:
+                copy_file(sbi_files[i], dest + '/' + p + '.sbi')
+            elif i < len(magic_word) and magic_word[i]:
                 print('Create magic word for disc', i)
                 create_sbi(dest + '/' + p + '.sbi', magic_word[i])
                 
@@ -4407,6 +4426,7 @@ def prepare_target_inputs(
     *,
     undither=False,
     include_libcrypt=True,
+    sbi_files=None,
 ):
     """Create isolated inputs for one planned target conversion."""
     target_dir = os.path.join(subdir, 'targets', plan.target) + os.sep
@@ -4432,10 +4452,32 @@ def prepare_target_inputs(
         else 0
         for disc in plan.discs
     )
-    subchannels = tuple(
-        generate_subchannels(value) if value else None
-        for value in magic_word
-    )
+    if sbi_files is None:
+        sbi_files = (None,) * len(plan.discs)
+    else:
+        sbi_files = tuple(sbi_files)
+        if len(sbi_files) != len(plan.discs):
+            raise ValueError('sbi_files must have one entry per disc')
+
+    subchannels = []
+    for disc, value, sbi_file in zip(plan.discs, magic_word, sbi_files):
+        if not include_libcrypt:
+            subchannels.append(None)
+        elif sbi_file:
+            subchannels.append(
+                load_sbi(
+                    sbi_file,
+                    expected_magic_word=(
+                        disc.libcrypt_magic_word
+                        if disc.libcrypt_magic_word is not None
+                        else None
+                    ),
+                    sector_count=disc.description.sector_count,
+                ).to_pbp_subchannels()
+            )
+        else:
+            subchannels.append(generate_subchannels(value) if value else None)
+    subchannels = tuple(subchannels)
     return working_cues, working_images, magic_word, subchannels
 
 
@@ -4445,6 +4487,7 @@ def write_target_report(
     eboot_path=None,
     *,
     overrides=(),
+    protection=(),
     validated=False,
 ):
     """Write one plan report and include structural PBP validation."""
@@ -4452,6 +4495,10 @@ def write_target_report(
     report = render_target_workflow_report(plan)
     if overrides:
         report += 'Overrides:\n' + ''.join(f'- {item}\n' for item in overrides)
+    if protection:
+        report += 'Protection data:\n' + ''.join(
+            f'- {item}\n' for item in protection
+        )
     if eboot_path is None:
         if validated:
             report += 'Validation: passed\n'
@@ -4780,6 +4827,11 @@ if __name__ == "__main__":
     parser.add_argument('--no-libcrypt', action='store_true',
                     help='Do not patch libcrypt')
     parser.add_argument(
+        '--sbi',
+        action='append',
+        help='SBI file for each input disc; repeat for multi-disc games',
+    )
+    parser.add_argument(
         '--allow-missing-fixes',
         action='store_true',
         help='Continue when a required compatibility fix is unavailable',
@@ -4881,7 +4933,6 @@ if __name__ == "__main__":
                     mem_cards.append(i)
                 continue
         
-        zip = None
         print('Processing', cue_file, '...')
 
         cue_file , real_cue_file, img_file = process_disk_file(cue_file, 0 if not idx else idx[0], temp_files, subdir=subdir)
@@ -4966,6 +5017,78 @@ if __name__ == "__main__":
         for warning in plan.warnings:
             if "continued at user request" in warning:
                 print(f"WARNING [{target}]: {warning}")
+
+    sbi_selections = []
+    if args.sbi and args.no_libcrypt:
+        raise ValueError('--sbi cannot be used with --no-libcrypt')
+    if args.sbi and len(args.sbi) != len(cue_files):
+        raise ValueError('--sbi must be repeated once for each disc')
+    for index, (source, disc_id) in enumerate(
+        zip(real_cue_files, real_disc_ids)
+    ):
+        planned_discs = [
+            plan.discs[index]
+            for plan in target_plans.values()
+            if index < len(plan.discs)
+        ]
+        magic_words = {
+            disc.libcrypt_magic_word
+            for disc in planned_discs
+            if disc.libcrypt_magic_word is not None
+        }
+        if len(magic_words) > 1:
+            raise ValueError('targets disagree on the LibCrypt magic word')
+        expected_magic_word = next(iter(magic_words), None)
+        sector_count = (
+            planned_discs[0].description.sector_count
+            if planned_discs
+            else None
+        )
+
+        if args.sbi:
+            path = Path(args.sbi[index]).expanduser().resolve()
+            data = load_sbi(
+                path,
+                expected_magic_word=expected_magic_word,
+                sector_count=sector_count,
+            )
+            selection = SbiSelection(path, 'manual', data)
+            error = None
+        elif args.no_libcrypt:
+            selection = None
+            error = None
+        else:
+            result = resolve_sbi(
+                source,
+                disc_id,
+                expected_magic_word=expected_magic_word,
+                sector_count=sector_count,
+                cache_dir=popfe_runtime.cache_dir / 'psxfoundry' / 'sbi',
+            )
+            selection, error = result.selection, result.error
+
+        if selection is not None:
+            print(
+                'SBI disc %d: %s (%s)'
+                % (index + 1, selection.path, selection.origin)
+            )
+        elif expected_magic_word and not args.no_libcrypt:
+            warning = error or 'verified SBI data is unavailable'
+            if not args.allow_missing_fixes:
+                raise ValueError(
+                    warning + '; use --allow-missing-fixes to continue '
+                    'with generated LibCrypt data'
+                )
+            print(
+                'WARNING: disc %d has no verified SBI; using generated '
+                'LibCrypt data: %s' % (index + 1, warning)
+            )
+        sbi_selections.append(selection)
+
+    sbi_files = tuple(
+        str(selection.path) if selection is not None else None
+        for selection in sbi_selections
+    )
 
     def output_disc_ids(plan):
         values = list(plan.output_disc_ids)
@@ -5117,6 +5240,18 @@ if __name__ == "__main__":
             return ('LibCrypt handling disabled',)
         return ()
 
+    def sbi_report(plan):
+        items = []
+        for index, (disc, selection) in enumerate(
+            zip(plan.discs, sbi_selections),
+            start=1,
+        ):
+            if selection is not None:
+                items.append(f'Disc {index}: SBI ({selection.origin})')
+            elif disc.libcrypt_magic_word and not args.no_libcrypt:
+                items.append(f'Disc {index}: generated LibCrypt fallback')
+        return tuple(items)
+
     if args.psp_dir:
         plan = target_plans[psp_target]
         target_ids = output_disc_ids(plan)
@@ -5128,6 +5263,7 @@ if __name__ == "__main__":
             subdir,
             undither=args.psx_undither,
             include_libcrypt=not args.no_libcrypt,
+            sbi_files=sbi_files,
         )
         aea_files, extra_data_tracks = generate_aea_files(
             target_cues, target_images, subdir
@@ -5170,6 +5306,7 @@ if __name__ == "__main__":
             plan,
             output_path,
             overrides=libcrypt_overrides(plan),
+            protection=sbi_report(plan),
         )
     if args.ps2_dir:
         plan = target_plans['ps2']
@@ -5202,6 +5339,7 @@ if __name__ == "__main__":
             subdir,
             undither=args.psx_undither,
             include_libcrypt=not args.no_libcrypt,
+            sbi_files=sbi_files,
         )
         aea_files, extra_data_tracks = generate_aea_files(
             target_cues, target_images, subdir
@@ -5238,6 +5376,7 @@ if __name__ == "__main__":
             Path(output_path).with_name('PSXFoundry-report.txt'),
             plan,
             overrides=libcrypt_overrides(plan),
+            protection=sbi_report(plan),
             validated=True,
         )
     if args.psc_dir:
@@ -5294,6 +5433,7 @@ if __name__ == "__main__":
             real_disc_ids,
             subdir,
             include_libcrypt=not args.no_libcrypt,
+            sbi_files=sbi_files,
         )
     if args.retroarch_bin_dir:
         new_path = args.retroarch_bin_dir + '/' + game_title
@@ -5303,11 +5443,13 @@ if __name__ == "__main__":
             retroarch_cues,
             retroarch_images,
             retroarch_magic,
+            sbi_files,
         )
         write_target_report(
             Path(new_path) / 'PSXFoundry-report.txt',
             retroarch_plan,
             overrides=libcrypt_overrides(retroarch_plan),
+            protection=sbi_report(retroarch_plan),
         )
     if args.retroarch_cue_dir:
         new_path = args.retroarch_cue_dir + '/' + game_title
@@ -5317,11 +5459,13 @@ if __name__ == "__main__":
             retroarch_cues,
             retroarch_images,
             retroarch_magic,
+            sbi_files,
         )
         write_target_report(
             Path(new_path) / 'PSXFoundry-report.txt',
             retroarch_plan,
             overrides=libcrypt_overrides(retroarch_plan),
+            protection=sbi_report(retroarch_plan),
         )
     if args.retroarch_thumbnail_dir:
         create_retroarch_thumbnail(args.retroarch_thumbnail_dir, game_title, icon0, pic1)
@@ -5364,6 +5508,7 @@ if __name__ == "__main__":
             retroarch_plan,
             new_path,
             overrides=libcrypt_overrides(retroarch_plan),
+            protection=sbi_report(retroarch_plan),
         )
     for f in temp_files:
         print('Deleting temp file', f) if verbose else None

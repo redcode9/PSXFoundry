@@ -20,7 +20,7 @@ The macOS work first developed for upstream remains available in
 - Disc discovery and natural multidisc ordering.
 - Game ID, title, region, track layout and content hash detection.
 - Local artwork, manual and audio import before online lookup of missing items.
-- LibCrypt handling, POPS configuration, CD audio mode and compression choice.
+- Validated SBI import, POPS configuration, CD audio mode and compression choice.
 - Exact PPF or Xdelta corrections for known disc revisions.
 - Atomic output writes and structural validation of generated PBP files.
 
@@ -66,11 +66,15 @@ loads up to five discs and first looks for these local assets:
 
 - `ICON0.PNG`, `PIC0.PNG` and `PIC1.PNG`;
 - `SND0.AT3` or a supported WAV file;
-- `MANUAL.PDF`, `MANUAL.ZIP`, `MANUAL.CBR` or `LOGO.PNG`.
+- `MANUAL.PDF`, `MANUAL.ZIP`, `MANUAL.CBR` or `LOGO.PNG`;
+- an SBI file with the disc name or serial.
 
-Only missing metadata and artwork are requested online. Local files always win.
-Advanced overrides remain available, but normal conversions do not require
-manual compatibility choices.
+Local files always win. Missing LibCrypt data is requested from
+[PSX DataCenter](https://psxdatacenter.com/sbifiles.html), validated against the
+disc and cached. Each disc also has a manual SBI selector. If no verified file
+is available, PSXFoundry explains the risk before offering its generated
+fallback. Advanced overrides remain available, but normal conversions do not
+require manual compatibility choices.
 
 ## Command line
 
@@ -79,6 +83,7 @@ The CLI can build several targets in one run:
 ```sh
 psxfoundry --psp-dir=/Volumes/PSP game.cue
 psxfoundry --psp-dir=/Volumes/VITA/pspemu game.cue
+psxfoundry --psp-dir=/Volumes/PSP --sbi game.sbi game.cue
 psxfoundry --ps3-pkg=game.pkg game.cue
 psxfoundry --retroarch-pbp-dir=./retroarch game-disc-1.cue game-disc-2.cue
 ```
@@ -107,6 +112,7 @@ PSXFoundry is maintained at
 architecture, platform support, databases, patches and most conversion code
 come from POP-FE. Thank you to Ronnie Sahlberg and every
 [POP-FE contributor](https://github.com/sahlberg/pop-fe/graphs/contributors).
+PSX DataCenter provides the online SBI index used by the resolver.
 
 Compatibility entries retain their sources and contributor credits. Exact
 third-party revisions and licenses are recorded in the notices and the macOS

@@ -14,6 +14,7 @@ class EbootExpectation:
     tocs: tuple[bytes | None, ...] = ()
     configs: tuple[bytes | None, ...] = ()
     subchannel_records: tuple[int | None, ...] = ()
+    subchannel_sha256: tuple[str | None, ...] = ()
     require_block_checksums: bool = True
 
 
@@ -106,6 +107,15 @@ def validate_eboot(path, expectation=None):
                     f"disc {number} subchannel records: expected {expected}, "
                     f"found {disc.subchannel_records}"
                 )
+
+    if _compare_sequence(
+        "subchannel hashes", discs, expectation.subchannel_sha256, errors
+    ):
+        for number, (disc, expected) in enumerate(
+            zip(discs, expectation.subchannel_sha256), start=1
+        ):
+            if expected is not None and disc.subchannel_sha256 != expected.lower():
+                errors.append(f"disc {number} subchannel data does not match")
 
     return ValidationResult(inspection, tuple(errors))
 

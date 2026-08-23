@@ -2,6 +2,7 @@
 
 import argparse
 from dataclasses import dataclass
+import hashlib
 import os
 import pygubu
 import queue
@@ -36,6 +37,12 @@ from psxfoundry.report import (
     render_workflow_summary,
 )
 from psxfoundry.registry import CompatibilityAssetError
+from psxfoundry.sbi import (
+    SbiError,
+    SbiSelection,
+    load_sbi,
+    resolve_sbi,
+)
 from psxfoundry.validation import EbootExpectation, validate_generated_eboot
 
 have_pytube = False
@@ -48,7 +55,7 @@ except:
 from PIL import Image
 from bchunk import bchunk
 import importlib  
-from gamedb import games, themes
+from gamedb import games, libcrypt, themes
 try:
     import popfe
 except:
@@ -99,6 +106,8 @@ class PspConversionRequest:
     cue_files: tuple[str, ...]
     real_cue_files: tuple[str, ...]
     image_files: tuple[str, ...]
+    sbi_files: tuple[str | None, ...]
+    sbi_origins: tuple[str | None, ...]
     work_dir: str
     snd0: str
     manual: str
@@ -127,6 +136,8 @@ class PspApp:
         self.disc_ids = None
         self.md5_sums = None
         self.real_disc_ids = None
+        self.sbi_selections = None
+        self.sbi_errors = None
         self.icon0 = None
         self.icon0_tk = None
         self.pic0 = None
@@ -197,9 +208,15 @@ class PspApp:
             'on_target_selected': self.on_target_selected,
             'on_toggle_advanced': self.on_toggle_advanced,
             'on_restore_automatic': self.on_restore_automatic,
+            'on_sbi1_clicked': self.on_sbi1_clicked,
+            'on_sbi2_clicked': self.on_sbi2_clicked,
+            'on_sbi3_clicked': self.on_sbi3_clicked,
+            'on_sbi4_clicked': self.on_sbi4_clicked,
+            'on_sbi5_clicked': self.on_sbi5_clicked,
         }
 
         builder.connect_callbacks(callbacks)
+        self._configure_layout()
         self.builder.get_variable('import_all_discs_variable').set('on')
         self.builder.get_object('target', self.master).configure(
             values=tuple(TARGET_VALUES),
@@ -211,12 +228,6 @@ class PspApp:
             self.builder.get_object(object_id, self.master).grid_remove()
         self.builder.get_object('frame4', self.master).columnconfigure(0, weight=1)
         self.builder.get_object('frame4', self.master).columnconfigure(1, weight=1)
-        for object_id in ('discs', 'separator5', 'frame1'):
-            self.builder.get_object(object_id, self.master).pack_configure(fill='x')
-        self.builder.get_object('output_frame', self.master).columnconfigure(
-            1, weight=1
-        )
-
         self._theme = ''
         o = ['']
         for theme in themes:
@@ -241,6 +252,117 @@ class PspApp:
                 except:
                     True
         temp_files = []  
+
+    def _configure_layout(self):
+        main = self.mainwindow
+        main.columnconfigure(0, weight=1, uniform='content')
+        main.columnconfigure(1, weight=1, uniform='content')
+
+        source_column = self.builder.get_object('frame9', self.master)
+        source_column.grid_configure(sticky='new')
+
+        discs = self.builder.get_object('discs', self.master)
+        discs.pack_configure(fill='x', expand=False)
+        discs.columnconfigure(0, weight=1)
+        for index in range(1, 6):
+            self.builder.get_object(
+                'disc%d' % index, self.master
+            ).grid_configure(sticky='ew', pady=2)
+            self.builder.get_object(
+                'discid%d' % index, self.master
+            ).grid_configure(padx=(6, 0), pady=2)
+
+        self.builder.get_object('separator5', self.master).pack_forget()
+        details = self.builder.get_object('frame1', self.master)
+        details.pack_configure(fill='x', expand=False, pady=(8, 0))
+        details.columnconfigure(0, weight=1)
+
+        detail_rows = (
+            ('title_frame', 'label9', 'title'),
+            ('manual_frame', 'label2', 'manual'),
+            ('frame3', 'label5', 'logo'),
+            ('snd0_frame', 'label13', 'snd0'),
+            ('theme_frame', 'label3', 'theme'),
+        )
+        for frame_id, label_id, input_id in detail_rows:
+            row = self.builder.get_object(frame_id, self.master)
+            row.grid_configure(sticky='ew', pady=3)
+            row.columnconfigure(1, weight=1)
+            self.builder.get_object(label_id, self.master).configure(
+                anchor='e', width=13
+            )
+            self.builder.get_object(input_id, self.master).grid_configure(
+                sticky='ew', padx=(8, 0)
+            )
+
+        self.builder.get_object('youtube_button', self.master).grid_configure(
+            row=1, column=1, columnspan=1, pady=(4, 0), sticky='e'
+        )
+
+        preview_column = self.builder.get_object('frame7', self.master)
+        preview_column.grid_configure(sticky='new')
+        preview_column.columnconfigure(0, weight=1)
+        preview = self.builder.get_object('preview', self.master)
+        preview.grid_configure(sticky='n')
+        for column in range(3):
+            preview.columnconfigure(column, weight=1)
+        self.builder.get_object('frame10', self.master).grid_configure(
+            row=1, column=0, sticky='w'
+        )
+        self.builder.get_object('frame11', self.master).grid_configure(
+            row=2, column=0, padx=(0, 8), sticky='w'
+        )
+        self.builder.get_object('frame12', self.master).grid_configure(
+            row=2, column=1, sticky='w'
+        )
+
+        images = self.builder.get_object('images', self.master)
+        images.grid_configure(sticky='ew', pady=(10, 0))
+        for column in range(3):
+            images.columnconfigure(column, weight=1, uniform='artwork')
+
+        output = self.builder.get_object('output_frame', self.master)
+        output.columnconfigure(1, weight=1)
+        self.builder.get_object('label15', self.master).configure(
+            anchor='e', width=8
+        )
+        self.builder.get_object('create_button', self.master).configure(width=22)
+
+        advanced = self.builder.get_object('frame4', self.master)
+        advanced.configure(padding=10)
+        advanced.columnconfigure(0, weight=1, uniform='advanced')
+        advanced.columnconfigure(1, weight=1, uniform='advanced')
+        for object_id in ('artwork_settings', 'compatibility_settings'):
+            panel = self.builder.get_object(object_id, self.master)
+            panel.configure(padding=8)
+            panel.columnconfigure(1, weight=1)
+
+        option_groups = (
+            (
+                ('watermark', 'watermark_help'),
+                ('disable_pic0', 'disable_pic0_help'),
+                ('disable_pic1', 'disable_pic1_help'),
+                ('disable_snd0', 'disable_snd0_help'),
+                ('ntsc_u_icon0', 'ntsc_u_icon0_help'),
+            ),
+            (
+                ('use_cdda', 'use_cdda_help'),
+                ('force_ntsc', 'force_ntsc_help'),
+                ('use_psx_undither', 'use_psx_undither_help'),
+                ('nopstitleimg', 'nopstitleimg_help'),
+                ('pic1aslogo', 'pic1aslogo_help'),
+            ),
+        )
+        for group in option_groups:
+            for row, (option_id, help_id) in enumerate(group):
+                self.builder.get_object(
+                    option_id, self.master
+                ).grid_configure(row=row, column=0, pady=2, sticky='w')
+                help_label = self.builder.get_object(help_id, self.master)
+                help_label.configure(wraplength=320)
+                help_label.grid_configure(
+                    row=row, column=1, padx=(8, 4), pady=2, sticky='w'
+                )
 
     def _manual_override_labels(self):
         return tuple(
@@ -269,6 +391,9 @@ class PspApp:
         labels = self._manual_override_labels()
         if labels:
             summary += '\nManual changes: ' + ', '.join(labels)
+        sbi_summary = self._sbi_summary()
+        if sbi_summary:
+            summary += '\n' + sbi_summary
         self.builder.get_variable('plan_summary_variable').set(summary)
 
     def _mark_advanced_override(self, name):
@@ -360,6 +485,8 @@ class PspApp:
         self.disc_ids = []
         self.md5_sums = []
         self.real_disc_ids = []
+        self.sbi_selections = []
+        self.sbi_errors = []
         self.icon0 = None
         self.icon0_tk = None
         self.pic0 = None
@@ -381,6 +508,7 @@ class PspApp:
             self.builder.get_object('disc' + str(idx), self.master).config(state='disabled')
             self.builder.get_object('disc' + str(idx), self.master).grid_remove()
             self.builder.get_object('discid%d' % (idx), self.master).grid_remove()
+            self.builder.get_object('sbi%d_button' % idx, self.master).grid_remove()
         self.builder.get_object('add_disc_button', self.master).config(state='normal')
         self.builder.get_object('create_button', self.master).config(state='disabled')
         self.builder.get_object('youtube_button', self.master).config(state='disabled')
@@ -544,20 +672,118 @@ class PspApp:
                 c.create_image(0, 0, image=self.pic1_tk, anchor='nw')
 
         self.update_preview()
-        
+
+    def _expected_sbi_magic(self, disc_id):
+        entry = libcrypt.get(disc_id)
+        return entry.get('magic_word') if entry else None
+
+    def _sbi_summary(self):
+        parts = []
+        labels = {
+            'local': 'local SBI',
+            'manual': 'manual SBI',
+            'downloaded': 'downloaded SBI',
+            'cached': 'cached SBI',
+        }
+        for index, disc_id in enumerate(self.real_disc_ids or []):
+            selection = self.sbi_selections[index]
+            if selection is not None:
+                parts.append(
+                    f'Disc {index + 1}: {labels[selection.origin]}'
+                )
+            elif self._expected_sbi_magic(disc_id):
+                parts.append(f'Disc {index + 1}: SBI missing')
+        return 'Protection data: ' + '; '.join(parts) if parts else ''
+
+    def _update_sbi_button(self, index):
+        button = self.builder.get_object(
+            'sbi%d_button' % (index + 1), self.master
+        )
+        selection = self.sbi_selections[index]
+        if selection is not None:
+            labels = {
+                'local': 'SBI: local',
+                'manual': 'SBI: manual',
+                'downloaded': 'SBI: online',
+                'cached': 'SBI: cached',
+            }
+            text = labels[selection.origin]
+        elif self._expected_sbi_magic(self.real_disc_ids[index]):
+            text = 'SBI: missing'
+        else:
+            text = 'Select SBI...'
+        button.configure(text=text)
+
+    def _resolve_disc_sbi(self, source_path, disc_id):
+        expected = self._expected_sbi_magic(disc_id)
+        result = resolve_sbi(
+            source_path,
+            disc_id,
+            expected_magic_word=expected,
+            cache_dir=popfe_runtime.cache_dir / 'psxfoundry' / 'sbi',
+        )
+        return result.selection, result.error
+
+    def _select_sbi(self, index):
+        if index >= len(self.cue_files) or self.conversion_plan is None:
+            return
+        source_path = self.real_cue_files[index]
+        path = filedialog.askopenfilename(
+            title='Select SBI for disc %d' % (index + 1),
+            initialdir=str(Path(source_path).parent),
+            filetypes=[('SBI files', '*.sbi'), ('All files', '*')],
+        )
+        if not path:
+            return
+        disc = self.conversion_plan.discs[index]
+        try:
+            data = load_sbi(
+                path,
+                expected_magic_word=disc.libcrypt_magic_word,
+                sector_count=disc.description.sector_count,
+            )
+        except SbiError as error:
+            messagebox.showerror('Invalid SBI file', str(error), parent=self.master)
+            return
+        self.sbi_selections[index] = SbiSelection(
+            Path(path).resolve(), 'manual', data
+        )
+        self.sbi_errors[index] = None
+        self._update_sbi_button(index)
+        self._update_plan_summary()
+
+    def on_sbi1_clicked(self):
+        self._select_sbi(0)
+
+    def on_sbi2_clicked(self):
+        self._select_sbi(1)
+
+    def on_sbi3_clicked(self):
+        self._select_sbi(2)
+
+    def on_sbi4_clicked(self):
+        self._select_sbi(3)
+
+    def on_sbi5_clicked(self):
+        self._select_sbi(4)
+
     def _sync_disc_rows(self):
         loaded = len(self.cue_files)
         for idx in range(1, 6):
             chooser = self.builder.get_object('disc%d' % idx, self.master)
             disc_id = self.builder.get_object('discid%d' % idx, self.master)
+            sbi_button = self.builder.get_object('sbi%d_button' % idx, self.master)
             if idx <= loaded:
                 chooser.grid()
                 disc_id.grid()
+                sbi_button.grid()
                 chooser.config(state='disabled')
                 disc_id.config(state='normal')
+                self._update_sbi_button(idx - 1)
             else:
                 chooser.grid_remove()
                 disc_id.grid_remove()
+                sbi_button.grid_remove()
         self.builder.get_object('add_disc_button', self.master).config(
             state='disabled' if loaded >= 5 else 'normal'
         )
@@ -626,7 +852,7 @@ class PspApp:
             frame.grid_remove()
             for layout_frame in layout_frames:
                 layout_frame.grid_remove()
-            button.configure(text='Advanced settings...')
+            button.configure(text='Advanced settings')
 
     def on_restore_automatic(self):
         self._apply_automatic_settings(refresh_assets=True)
@@ -661,6 +887,13 @@ class PspApp:
         self.real_disc_ids.append(disc_id)
         self.cue_files.append(cue_file)
         self.real_cue_files.append(real_cue_file)
+        self.builder.get_variable('import_summary_variable').set(
+            'Checking LibCrypt protection data...'
+        )
+        self.master.update()
+        selection, sbi_error = self._resolve_disc_sbi(source_path, disc_id)
+        self.sbi_selections.append(selection)
+        self.sbi_errors.append(sbi_error)
 
         if not self.manual and disc_id in games and 'manual' in games[disc_id]:
             print('Found a manual for', disc_id) if verbose else None
@@ -777,6 +1010,18 @@ class PspApp:
             parts.append('Local: ' + ', '.join(local))
         if automatic:
             parts.append('Automatic: ' + ', '.join(automatic))
+        sbi_local = sum(
+            selection is not None and selection.origin in {'local', 'manual'}
+            for selection in self.sbi_selections
+        )
+        sbi_online = sum(
+            selection is not None and selection.origin in {'downloaded', 'cached'}
+            for selection in self.sbi_selections
+        )
+        if sbi_local:
+            parts.append('Local SBI: %d' % sbi_local)
+        if sbi_online:
+            parts.append('Automatic SBI: %d' % sbi_online)
         parts.extend(result.warnings)
         self.builder.get_variable('import_summary_variable').set('  |  '.join(parts))
 
@@ -1048,6 +1293,14 @@ class PspApp:
             cue_files=tuple(self.cue_files),
             real_cue_files=tuple(self.real_cue_files),
             image_files=tuple(self.img_files),
+            sbi_files=tuple(
+                str(selection.path) if selection is not None else None
+                for selection in self.sbi_selections
+            ),
+            sbi_origins=tuple(
+                selection.origin if selection is not None else None
+                for selection in self.sbi_selections
+            ),
             work_dir=self.subdir,
             snd0=self.builder.get_variable('snd0_variable').get(),
             manual=self.builder.get_variable('manual_variable').get(),
@@ -1101,6 +1354,7 @@ class PspApp:
                 request.real_disc_ids,
                 request.work_dir,
                 undither=request.undither,
+                sbi_files=request.sbi_files,
             )
         )
 
@@ -1184,6 +1438,12 @@ class PspApp:
                     len(data) // 12 if data is not None else 0
                     for data in subchannels
                 ),
+                subchannel_sha256=tuple(
+                    hashlib.sha256(data).hexdigest()
+                    if data is not None
+                    else None
+                    for data in subchannels
+                ),
             ),
             report_path=report_path,
         )
@@ -1196,8 +1456,24 @@ class PspApp:
         overrides = 'Overrides:\n' + '\n'.join(
             override_lines or ['- None']
         ) + '\n'
+        protection_lines = []
+        for index, (disc, origin, data) in enumerate(
+            zip(request.plan.discs, request.sbi_origins, subchannels),
+            start=1,
+        ):
+            if origin:
+                protection_lines.append(f'- Disc {index}: SBI ({origin})')
+            elif disc.libcrypt_magic_word is not None and data is not None:
+                protection_lines.append(
+                    f'- Disc {index}: generated LibCrypt fallback'
+                )
+        protection = (
+            'Protection data:\n' + '\n'.join(protection_lines) + '\n'
+            if protection_lines
+            else ''
+        )
         report_path.write_text(
-            report + overrides + validation.to_text(),
+            report + overrides + protection + validation.to_text(),
             encoding='utf-8',
         )
         if not validation.ok:
@@ -1280,6 +1556,37 @@ class PspApp:
             self.init_data()
             return
 
+    def _confirm_generated_sbi_fallback(self, plan):
+        missing = [
+            index
+            for index, (disc, selection) in enumerate(
+                zip(plan.discs, self.sbi_selections),
+                start=1,
+            )
+            if disc.libcrypt_magic_word and selection is None
+        ]
+        if not missing:
+            return True
+        discs = ', '.join(str(index) for index in missing)
+        details = [
+            self.sbi_errors[index - 1]
+            for index in missing
+            if self.sbi_errors[index - 1]
+        ]
+        message = (
+            f'No verified SBI file is available for disc {discs}.\n\n'
+            'PSXFoundry can use generated LibCrypt data, but it may not '
+            'match the original disc. The game could hang or crash.\n\n'
+            'Continue with the generated fallback?'
+        )
+        if details:
+            message += '\n\nLookup result: ' + details[0]
+        return messagebox.askyesno(
+            'LibCrypt SBI missing',
+            message,
+            parent=self.master,
+        )
+
     def on_create_eboot(self):
         if not self.cue_files or self.conversion_dialog is not None:
             return
@@ -1290,6 +1597,8 @@ class PspApp:
                 or self._refresh_conversion_plan_with_prompt()
             )
             if plan is None:
+                return
+            if not self._confirm_generated_sbi_fallback(plan):
                 return
             request = self._build_conversion_request(plan)
         except Exception as error:
@@ -1344,7 +1653,7 @@ if __name__ == "__main__":
         )
     app = PspApp(root)
     root.title('PSXFoundry PSP')
-    root.minsize(820, 560)
+    root.minsize(1040, 680)
     root.rowconfigure(0, weight=1)
     root.columnconfigure(0, weight=1)
     app.mainwindow.columnconfigure(0, weight=1)

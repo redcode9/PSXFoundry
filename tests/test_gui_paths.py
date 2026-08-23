@@ -76,12 +76,28 @@ class GuiPathTests(unittest.TestCase):
         ui = (REPOSITORY_ROOT / "pop-fe-psp.ui").read_text(encoding="utf-8")
         source = (REPOSITORY_ROOT / "pop-fe-psp.py").read_text(encoding="utf-8")
 
-        self.assertIn("Import folder...", ui)
-        self.assertIn("Add disc...", ui)
-        self.assertIn("Import all discs in folder", ui)
+        self.assertIn("Open game folder...", ui)
+        self.assertIn("Add disc image...", ui)
+        self.assertIn("Include every disc found in the folder", ui)
         self.assertIn("import_all_discs_variable", ui)
         self.assertIn("def import_folder(", source)
         self.assertIn("def load_disc(", source)
+
+    def test_psp_gui_resolves_and_accepts_per_disc_sbi_files(self):
+        ui = ET.parse(REPOSITORY_ROOT / "pop-fe-psp.ui")
+        object_ids = {
+            element.attrib.get("id")
+            for element in ui.iter("object")
+        }
+        source = (REPOSITORY_ROOT / "pop-fe-psp.py").read_text(encoding="utf-8")
+
+        self.assertTrue(
+            {f"sbi{index}_button" for index in range(1, 6)} <= object_ids
+        )
+        self.assertIn("resolve_sbi(", source)
+        self.assertIn("sbi_files=request.sbi_files", source)
+        self.assertIn("Continue with the generated fallback?", source)
+        self.assertIn("The game could hang or crash", source)
 
     def test_psp_gui_uses_automatic_planning_and_validation(self):
         source = (REPOSITORY_ROOT / "pop-fe-psp.py").read_text(encoding="utf-8")
@@ -145,6 +161,30 @@ class GuiPathTests(unittest.TestCase):
         self.assertIn("def on_restore_automatic", source)
         self.assertIn("render_workflow_summary", source)
         self.assertNotIn("('undither', self.builder.get_variable", source)
+
+    def test_psp_gui_uses_content_sized_workflow_sections(self):
+        ui = ET.parse(REPOSITORY_ROOT / "pop-fe-psp.ui")
+        objects = {
+            element.attrib.get("id"): element
+            for element in ui.iter("object")
+        }
+
+        for object_id in ("discs", "frame1", "frame7", "output_frame"):
+            with self.subTest(object_id=object_id):
+                self.assertEqual(objects[object_id].attrib["class"], "ttk.Labelframe")
+
+        frame_sizes = {
+            property_.text
+            for object_ in objects.values()
+            if object_.attrib.get("class") in {"ttk.Frame", "ttk.Labelframe"}
+            for property_ in object_.findall("property")
+            if property_.attrib.get("name") in {"height", "width"}
+        }
+        self.assertNotIn("200", frame_sizes)
+
+        source = (REPOSITORY_ROOT / "pop-fe-psp.py").read_text(encoding="utf-8")
+        self.assertIn("def _configure_layout(self):", source)
+        self.assertIn("root.minsize(1040, 680)", source)
 
     def test_ps3_gui_uses_target_specific_planning(self):
         source = (REPOSITORY_ROOT / "pop-fe-ps3.py").read_text(encoding="utf-8")

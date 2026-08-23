@@ -112,6 +112,15 @@ class BackendToolIntegrationTests(unittest.TestCase):
             2,
         )
 
+    def test_exact_sbi_data_replaces_generated_subchannels(self):
+        source = (REPOSITORY_ROOT / "pop-fe.py").read_text(encoding="utf-8")
+
+        self.assertIn("sbi_files=None", source)
+        self.assertIn("load_sbi(", source)
+        self.assertIn(".to_pbp_subchannels()", source)
+        self.assertIn("sbi_files=sbi_files", source)
+        self.assertIn("--sbi", source)
+
 
 if __name__ == "__main__":
     unittest.main()
