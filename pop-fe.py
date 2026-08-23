@@ -24,6 +24,7 @@ import re
 import random
 import shutil
 import struct
+import tempfile
 from pathlib import Path
 have_pycdlib = False
 try:
@@ -4143,6 +4144,12 @@ def create_sbi(sbi, magic_word):
                 f.write(generate_sbi(sector_pairs[i][0]))
                 f.write(generate_sbi(sector_pairs[i][1]))
 
+def _create_manual_work_dir(subdir):
+    work_dir = tempfile.mkdtemp(prefix='DOCUMENT-', dir=subdir)
+    temp_files.append(work_dir)
+    return work_dir
+
+
 # Convert scans of the manual into a DOCUMENT.DAT for PSP and PS3
 def create_manual(source, gameid, subdir='./pop-fe-work/', ps3_manual=False):
 
@@ -4155,17 +4162,19 @@ def create_manual(source, gameid, subdir='./pop-fe-work/', ps3_manual=False):
                 return source
             if _b == b'\x00PGD':
                 print('Need to convert to kludgy PSP DOCUMENT.DAT format')
-                _d = subdir + '/PSP-DOCUMENT'
+                manual_dir = _create_manual_work_dir(subdir)
+                _d = os.path.join(manual_dir, 'pages')
                 os.mkdir(_d)
                 decrypt_document(f.read(), _d)
                 print('Decrypted and extracted document to', _d)
-                _m = subdir + '/DOCUMENT.PSP'
+                _m = os.path.join(manual_dir, 'DOCUMENT.PSP')
                 create_document_from_dir(gameid, _d, _m)
                 print('Created PSP document')
                 return _m
 
     print('Create manual', source)
     files = []
+    manual_dir = None
 
     if source[:8] != 'https://':
         with open(source, 'rb') as f:
@@ -4175,7 +4184,8 @@ def create_manual(source, gameid, subdir='./pop-fe-work/', ps3_manual=False):
                 return source
             if signature == 0x04034b50: # a ZIP file?
                 print('Is a zip file')
-                tmpfile = subdir + '/DOCUMENT.zip'
+                manual_dir = _create_manual_work_dir(subdir)
+                tmpfile = os.path.join(manual_dir, 'DOCUMENT.zip')
                 temp_files.append(tmpfile)
                 copy_file(source, tmpfile)
                 source = tmpfile
@@ -4184,7 +4194,11 @@ def create_manual(source, gameid, subdir='./pop-fe-work/', ps3_manual=False):
     if source[:8] == 'https://':
         print('Download manual from', source)
         try:
-            tmpfile = subdir + '/DOCUMENT-' + source.split('/')[-1]
+            manual_dir = _create_manual_work_dir(subdir)
+            tmpfile = os.path.join(
+                manual_dir,
+                'DOCUMENT-' + source.split('/')[-1],
+            )
             temp_files.append(tmpfile)
             ret = requests.get(source)
             if ret.status_code != 200:
@@ -4203,53 +4217,57 @@ def create_manual(source, gameid, subdir='./pop-fe-work/', ps3_manual=False):
             return None
     if source[-4:] == '.zip':
         print('Unzip manual', source, 'from ZIP')
-        subdir = subdir + '/DOCUMENT-tmp'
-        os.mkdir(subdir)
-        temp_files.append(subdir)
+        if manual_dir is None:
+            manual_dir = _create_manual_work_dir(subdir)
+        pages_dir = os.path.join(manual_dir, 'pages')
+        os.mkdir(pages_dir)
+        temp_files.append(pages_dir)
 
         z = zipfile.ZipFile(source)
         for f in z.namelist():
             # Skip any subdirectories that might be created
             if f[-1] == '/' or f[-1] == '\\':
                 continue
-            f = z.extract(f, path=subdir)
+            f = z.extract(f, path=pages_dir)
             temp_files.append(f)
             files.append(f)
-            source = subdir
+            source = pages_dir
     if source[-4:] == '.cbr':
         print('Unzip manual', source, 'from CBR')
-        subdir = subdir + '/DOCUMENT-tmp'
-        os.mkdir(subdir)
-        temp_files.append(subdir)
+        manual_dir = _create_manual_work_dir(subdir)
+        pages_dir = os.path.join(manual_dir, 'pages')
+        os.mkdir(pages_dir)
+        temp_files.append(pages_dir)
 
         try:
             r = rarfile.RarFile(source)
             for f in r.namelist():
-                f = r.extract(f, path=subdir)
+                f = r.extract(f, path=pages_dir)
                 temp_files.append(f)
                 files.append(f)
-            source = subdir
+            source = pages_dir
         except:
             print('Failed to create SOFTWARE MANUAL. Could not extract images from CBR file. Make sure that UNRAR is installed.')
             return None
 
     if source[-4:] == '.pdf':
         print('Extract manual', source, 'from PDF')
-        subdir = subdir + '/DOCUMENT-tmp'
-        os.mkdir(subdir)
-        temp_files.append(subdir)
+        manual_dir = _create_manual_work_dir(subdir)
+        pages_dir = os.path.join(manual_dir, 'pages')
+        os.mkdir(pages_dir)
+        temp_files.append(pages_dir)
         try:
             idx = 0
             r = PyPDF2.PdfReader(source)
             for p in r.pages:
                 for i in p.images:
-                    f = subdir + '/' + f"{idx:04d}" + '.img'
+                    f = os.path.join(pages_dir, f"{idx:04d}.img")
                     with open(f, "wb") as fp:
-                        fp.write(i.data)                   
+                        fp.write(i.data)
                     idx = idx + 1
                     temp_files.append(f)
                     files.append(f)
-            source = subdir
+            source = pages_dir
         except:
             print('Failed to parse PDF.')
             return None
@@ -4258,7 +4276,8 @@ def create_manual(source, gameid, subdir='./pop-fe-work/', ps3_manual=False):
         print('Can not create manual.', source, 'is not a directory')
         return None
 
-    tmpfile = subdir + '/DOCUMENT.DAT'
+    output_dir = manual_dir or subdir
+    tmpfile = os.path.join(output_dir, 'DOCUMENT.DAT')
     temp_files.append(tmpfile)
     pages = []
     for p in sorted(files):
