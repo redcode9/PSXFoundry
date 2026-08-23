@@ -20,6 +20,7 @@ class ConversionPlan:
     discs: tuple[DiscDescription, ...]
     rule_id: str | None
     rule_status: str | None
+    source_match: str
     actions: tuple[CompatibilityAction, ...]
     expected_decoded_sizes: tuple[int, ...]
     warnings: tuple[str, ...]
@@ -44,6 +45,7 @@ def _identity(discs):
     return DiscIdentity(
         disc_ids=disc_ids,
         sha256=tuple(disc.sha256 for disc in discs) if complete else (),
+        sha1=tuple(disc.sha1 for disc in discs) if complete else (),
         md5=tuple(disc.md5 for disc in discs) if complete else (),
         region=region,
         track_layout_sha256=layouts,
@@ -85,7 +87,10 @@ def plan_conversion(discs, target, registry):
         warnings.append(f"Compatibility rule status is {rule.status}")
 
     rule_actions = rule.actions if rule else ()
-    if rule is not None and not (rule.match.sha256 or rule.match.md5):
+    exact_hash = bool(
+        rule and (rule.match.sha256 or rule.match.sha1 or rule.match.md5)
+    )
+    if rule is not None and not exact_hash:
         skipped = tuple(
             action.kind
             for action in rule_actions
@@ -121,6 +126,7 @@ def plan_conversion(discs, target, registry):
         discs=discs,
         rule_id=rule.id if rule else None,
         rule_status=rule.status if rule else None,
+        source_match="exact" if exact_hash else "game" if rule else "unknown",
         actions=actions,
         expected_decoded_sizes=expected_sizes,
         warnings=tuple(warnings),

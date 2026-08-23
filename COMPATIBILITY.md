@@ -36,14 +36,15 @@ does not replace testing on real hardware.
 
 ## Crash Bash SCES-02834
 
-The catalog contains a `reported` rule for the verified European disc revision
-identified by SHA-256 and sector count, not just by `SCES-02834`. For PSP and
-Adrenaline it applies the matching LibCrypt correction and POPS configuration.
+The catalog contains a `reported` rule for the European retail revision
+identified by SHA-1 and sector count, not just by `SCES-02834`. For PSP and
+Adrenaline it applies the matching binary patch, LibCrypt data and POPS
+configuration.
 
 PSXFoundry does not copy a boot file from Spyro or any other game. Substituting
-copyrighted files from another title is not a safe or redistributable fix. An
-unknown Crash Bash revision therefore receives the lossless default until its
-exact correction has evidence and a reproducible hash.
+copyrighted files from another title is not a safe or redistributable fix. For
+an unknown revision, PSXFoundry keeps the serial-level LibCrypt and POPS setup,
+skips the binary patch and warns the user.
 
 ## Reporting a result
 

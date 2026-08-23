@@ -8,7 +8,7 @@ from psxfoundry.disc import DiscDescription, TrackDescription
 from psxfoundry.work import atomic_write
 
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 
 def _canonical(data):
@@ -73,6 +73,7 @@ def _serialize(description):
         "image_sources": list(description.image_sources),
         "size": description.size,
         "sha256": description.sha256,
+        "sha1": description.sha1,
         "md5": description.md5,
         "disc_id": description.disc_id,
         "title": description.title,
@@ -105,6 +106,7 @@ def _deserialize(data, source):
         "image_sources",
         "size",
         "sha256",
+        "sha1",
         "md5",
         "disc_id",
         "title",
@@ -135,6 +137,7 @@ def _deserialize(data, source):
         image_sources=tuple(data["image_sources"]),
         size=data["size"],
         sha256=data["sha256"],
+        sha1=data["sha1"],
         md5=data["md5"],
         disc_id=data["disc_id"],
         title=data["title"],

@@ -11,7 +11,7 @@ from psxfoundry.psp_workflow import (
     read_planned_configs,
     verify_planned_patch_sources,
 )
-from psxfoundry.report import render_target_workflow_report
+from psxfoundry.report import render_target_workflow_report, render_workflow_summary
 from psxfoundry.registry import (
     CompatibilityAction,
     CompatibilityAssetError,
@@ -299,6 +299,61 @@ class PspConversionPlanTests(unittest.TestCase):
 
             with self.assertRaisesRegex(ValueError, "changed after analysis"):
                 verify_planned_patch_sources(plan, (disc,))
+
+    def test_summary_distinguishes_exact_and_serial_matches(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            disc = self.make_disc(root, "disc.bin", 0x48)
+            digest = hashlib.sha1(disc.read_bytes()).hexdigest()
+            exact = CompatibilityRule(
+                id="exact-revision",
+                title="Test game",
+                status="reported",
+                match=RuleMatch(
+                    disc_ids=("SCUS00001",),
+                    sha1=(digest,),
+                ),
+                targets=("psp",),
+                actions=(CompatibilityAction("set_libcrypt", (("magic_word", 1),)),),
+                sources=(RuleSource("Test", "https://example.com"),),
+                credits=("Test",),
+                tests=(),
+            )
+            exact_plan = build_psp_plan(
+                (disc,),
+                fallback_disc_ids=("SCUS00001",),
+                registry=CompatibilityRegistry((exact,)),
+                resource_root=root,
+            )
+            serial_plan = build_psp_plan(
+                (disc,),
+                fallback_disc_ids=("SCUS00001",),
+                registry=CompatibilityRegistry(
+                    (
+                        rule(
+                            (
+                                CompatibilityAction(
+                                    "set_libcrypt", (("magic_word", 1),)
+                                ),
+                            ),
+                        ),
+                    )
+                ),
+                resource_root=root,
+            )
+
+            self.assertIn(
+                "Exact disc revision recognized",
+                render_workflow_summary(exact_plan),
+            )
+            self.assertIn(
+                "disc revision not verified",
+                render_workflow_summary(serial_plan),
+            )
+            self.assertIn(
+                "LibCrypt protection data",
+                render_workflow_summary(exact_plan),
+            )
 
     def test_reads_ps3_config_commands_without_the_header(self):
         with tempfile.TemporaryDirectory() as directory:

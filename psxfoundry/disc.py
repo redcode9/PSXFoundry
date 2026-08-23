@@ -48,6 +48,7 @@ class DiscDescription:
     image_sources: tuple[str, ...]
     size: int
     sha256: str
+    sha1: str
     md5: str
     disc_id: str | None
     title: str | None
@@ -134,6 +135,7 @@ def _serial_from_bytes(data, current=None):
 
 def _hash_streams(streams):
     sha256 = hashlib.sha256()
+    sha1 = hashlib.sha1()
     md5 = hashlib.md5()
     size = 0
     serial = None
@@ -144,11 +146,12 @@ def _hash_streams(streams):
             if not chunk:
                 break
             sha256.update(chunk)
+            sha1.update(chunk)
             md5.update(chunk)
             size += len(chunk)
             serial = _serial_from_bytes(overlap + chunk, serial)
             overlap = chunk[-64:]
-    return size, sha256.hexdigest(), md5.hexdigest(), serial
+    return size, sha256.hexdigest(), sha1.hexdigest(), md5.hexdigest(), serial
 
 
 def _region(disc_id):
@@ -223,7 +226,7 @@ def _finish_tracks(parsed_tracks, sizes):
 
 
 def _description(source, format_name, image_sources, streams, parsed_tracks, sizes):
-    size, sha256, md5, disc_id = _hash_streams(streams)
+    size, sha256, sha1, md5, disc_id = _hash_streams(streams)
     tracks = _finish_tracks(parsed_tracks, sizes)
     title, protections = _metadata(disc_id)
     unique_sources = []
@@ -246,6 +249,7 @@ def _description(source, format_name, image_sources, streams, parsed_tracks, siz
         image_sources=tuple(image_sources),
         size=size,
         sha256=sha256,
+        sha1=sha1,
         md5=md5,
         disc_id=disc_id,
         title=title,
@@ -375,13 +379,14 @@ def _analyze_ccd(path):
         )
 
 
-def _incomplete_description(path, format_name, size, sha256, md5, warning):
+def _incomplete_description(path, format_name, size, sha256, sha1, md5, warning):
     return DiscDescription(
         source=path,
         format=format_name,
         image_sources=(path.name,),
         size=size,
         sha256=sha256,
+        sha1=sha1,
         md5=md5,
         disc_id=None,
         title=None,
@@ -397,12 +402,13 @@ def _incomplete_description(path, format_name, size, sha256, md5, warning):
 
 def _analyze_chd(path):
     with path.open("rb") as stream:
-        size, sha256, md5, _ = _hash_streams([stream])
+        size, sha256, sha1, md5, _ = _hash_streams([stream])
     return _incomplete_description(
         path,
         "chd",
         size,
         sha256,
+        sha1,
         md5,
         "CHD track metadata requires chdman analysis",
     )

@@ -52,6 +52,7 @@ REPEATABLE_ACTIONS = {"apply_ppf", "apply_xdelta"}
 RULE_ID_PATTERN = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 DISC_ID_PATTERN = re.compile(r"^[A-Z0-9]{4,16}$")
 SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
+SHA1_PATTERN = re.compile(r"^[0-9a-f]{40}$")
 MD5_PATTERN = re.compile(r"^[0-9a-f]{32}$")
 
 
@@ -83,6 +84,7 @@ class CompatibilityAssetError(RegistryError):
 class RuleMatch:
     disc_ids: tuple[str, ...] = ()
     sha256: tuple[str, ...] = ()
+    sha1: tuple[str, ...] = ()
     md5: tuple[str, ...] = ()
     region: str | None = None
     track_layout_sha256: tuple[str, ...] = ()
@@ -91,7 +93,7 @@ class RuleMatch:
     @property
     def specificity(self):
         return (
-            16 * bool(self.sha256 or self.md5)
+            16 * bool(self.sha256 or self.sha1 or self.md5)
             + 8 * bool(self.track_layout_sha256)
             + 4 * bool(self.sector_counts)
             + 2 * bool(self.disc_ids)
@@ -141,6 +143,7 @@ class CompatibilityRule:
 class DiscIdentity:
     disc_ids: tuple[str, ...] = ()
     sha256: tuple[str, ...] = ()
+    sha1: tuple[str, ...] = ()
     md5: tuple[str, ...] = ()
     region: str | None = None
     track_layout_sha256: tuple[str, ...] = ()
@@ -149,6 +152,7 @@ class DiscIdentity:
     def __post_init__(self):
         object.__setattr__(self, "disc_ids", tuple(value.upper() for value in self.disc_ids))
         object.__setattr__(self, "sha256", tuple(value.lower() for value in self.sha256))
+        object.__setattr__(self, "sha1", tuple(value.lower() for value in self.sha1))
         object.__setattr__(self, "md5", tuple(value.lower() for value in self.md5))
         if self.region is not None:
             object.__setattr__(self, "region", self.region.lower())
@@ -208,6 +212,7 @@ def _match(data, context):
     allowed = {
         "disc_ids",
         "sha256",
+        "sha1",
         "md5",
         "region",
         "track_layout_sha256",
@@ -220,6 +225,9 @@ def _match(data, context):
         else (),
         sha256=_strings(data["sha256"], f"{context}.sha256", SHA256_PATTERN)
         if "sha256" in data
+        else (),
+        sha1=_strings(data["sha1"], f"{context}.sha1", SHA1_PATTERN)
+        if "sha1" in data
         else (),
         md5=_strings(data["md5"], f"{context}.md5", MD5_PATTERN)
         if "md5" in data
@@ -237,7 +245,13 @@ def _match(data, context):
         else (),
     )
     if not any(
-        (result.disc_ids, result.sha256, result.md5, result.track_layout_sha256)
+        (
+            result.disc_ids,
+            result.sha256,
+            result.sha1,
+            result.md5,
+            result.track_layout_sha256,
+        )
     ):
         raise RegistryError(f"{context} needs an ID, content hash or layout hash")
     if result.region is not None and result.region not in REGIONS:
@@ -246,6 +260,7 @@ def _match(data, context):
         len(values)
         for values in (
             result.sha256,
+            result.sha1,
             result.md5,
             result.track_layout_sha256,
             result.sector_counts,
@@ -254,7 +269,10 @@ def _match(data, context):
     ]
     if result.disc_ids and any(length != len(result.disc_ids) for length in lengths):
         raise RegistryError(f"{context} disc arrays must have the same length")
-    if result.sha256 and result.md5:
+    content_hashes = sum(
+        bool(value) for value in (result.sha256, result.sha1, result.md5)
+    )
+    if content_hashes > 1:
         raise RegistryError(f"{context} must use one content hash algorithm")
     return result
 
@@ -470,6 +488,7 @@ def _matches(rule_match, identity):
     checks = (
         (rule_match.disc_ids, identity.disc_ids),
         (rule_match.sha256, identity.sha256),
+        (rule_match.sha1, identity.sha1),
         (rule_match.md5, identity.md5),
         (rule_match.track_layout_sha256, identity.track_layout_sha256),
         (rule_match.sector_counts, identity.sector_counts),

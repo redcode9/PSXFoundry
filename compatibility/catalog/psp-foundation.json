@@ -8,9 +8,9 @@
       "status": "reported",
       "match": {
         "disc_ids": ["SCES02834"],
-        "sha256": ["69e9d985b9d539c4b8eb514a0619993caf26332089d4ffe7d8187dc0f7893649"],
+        "sha1": ["253c05e9e8dbe9251f31b3512fd251390483cb59"],
         "region": "pal",
-        "sector_counts": [83904]
+        "sector_counts": [94332]
       },
       "targets": ["psp", "adrenaline"],
       "actions": [

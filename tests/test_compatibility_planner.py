@@ -16,7 +16,7 @@ from psxfoundry.report import render_plan_report
 
 
 SECTOR_SIZE = 2352
-CRASH_BASH_SHA256 = "69e9d985b9d539c4b8eb514a0619993caf26332089d4ffe7d8187dc0f7893649"
+CRASH_BASH_SHA1 = "253c05e9e8dbe9251f31b3512fd251390483cb59"
 
 
 class CompatibilityPlannerTests(unittest.TestCase):
@@ -28,12 +28,12 @@ class CompatibilityPlannerTests(unittest.TestCase):
         return replace(
             base,
             source=Path("Crash Bash.bin"),
-            size=197342208,
-            sha256=CRASH_BASH_SHA256,
+            size=221868864,
+            sha1=CRASH_BASH_SHA1,
             disc_id="SCES02834",
             title="CRASH BASH",
             region="pal",
-            sector_count=83904,
+            sector_count=94332,
         )
 
     def test_plans_exact_crash_bash_corrections(self):
@@ -54,7 +54,7 @@ class CompatibilityPlannerTests(unittest.TestCase):
                 "set_compression",
             ],
         )
-        self.assertEqual(plan.expected_decoded_sizes, (197342208,))
+        self.assertEqual(plan.expected_decoded_sizes, (221878272,))
 
     def test_unknown_audio_disc_uses_lossless_defaults(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -82,7 +82,7 @@ class CompatibilityPlannerTests(unittest.TestCase):
             self.assertTrue(plan.assumptions)
 
     def test_unknown_revision_gets_no_patch(self):
-        disc = replace(self.crash_bash_description(), sha256="0" * 64)
+        disc = replace(self.crash_bash_description(), sha1="0" * 40)
 
         plan = plan_conversion((disc,), "psp", load_registry())
 
@@ -124,7 +124,7 @@ class CompatibilityPlannerTests(unittest.TestCase):
         )
 
     def test_report_contains_profile_actions_and_unverified_state(self):
-        disc = replace(self.crash_bash_description(), sha256="0" * 64)
+        disc = replace(self.crash_bash_description(), sha1="0" * 40)
         plan = plan_conversion((disc,), "psp", load_registry())
 
         report = render_plan_report(plan)

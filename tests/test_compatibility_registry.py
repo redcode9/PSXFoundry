@@ -20,7 +20,8 @@ from psxfoundry.registry import (
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
-CRASH_BASH_SHA256 = "69e9d985b9d539c4b8eb514a0619993caf26332089d4ffe7d8187dc0f7893649"
+CRASH_BASH_SHA1 = "253c05e9e8dbe9251f31b3512fd251390483cb59"
+LOCAL_CRASH_BASH_SHA1 = "a2b83808967d77360d42c5e5d0a805bcf96f5764"
 
 
 def make_rule(rule_id, match):
@@ -42,9 +43,9 @@ class BundledRegistryTests(unittest.TestCase):
         registry = load_registry()
         identity = DiscIdentity(
             disc_ids=("SCES02834",),
-            sha256=(CRASH_BASH_SHA256,),
+            sha1=(CRASH_BASH_SHA1,),
             region="pal",
-            sector_counts=(83904,),
+            sector_counts=(94332,),
         )
 
         rule = registry.resolve(identity, "psp")
@@ -59,7 +60,7 @@ class BundledRegistryTests(unittest.TestCase):
         registry = load_registry()
         identity = DiscIdentity(
             disc_ids=("SCES02834",),
-            sha256=("0" * 64,),
+            sha1=(LOCAL_CRASH_BASH_SHA1,),
             region="pal",
             sector_counts=(83904,),
         )

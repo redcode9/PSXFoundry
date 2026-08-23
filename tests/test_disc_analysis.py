@@ -66,6 +66,7 @@ class DiscAnalysisTests(unittest.TestCase):
             self.assertEqual(result.region, "pal")
             self.assertEqual(result.sector_count, 6)
             self.assertEqual(result.sha256, hashlib.sha256(source).hexdigest())
+            self.assertEqual(result.sha1, hashlib.sha1(source).hexdigest())
             self.assertEqual([track.mode for track in result.tracks], ["MODE2/2352", "AUDIO"])
             self.assertEqual(result.tracks[0].stop_sector, 2)
             self.assertEqual(result.tracks[1].start_sector, 4)

@@ -15,6 +15,7 @@
   },
   "$defs": {
     "hash256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "hash160": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
     "hash128": {"type": "string", "pattern": "^[0-9a-f]{32}$"},
     "target": {
       "enum": ["psp", "adrenaline", "psio", "ps2", "ps3", "retroarch", "playstation-classic"]
@@ -32,6 +33,11 @@
           "type": "array",
           "minItems": 1,
           "items": {"$ref": "#/$defs/hash256"}
+        },
+        "sha1": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"$ref": "#/$defs/hash160"}
         },
         "md5": {
           "type": "array",
@@ -53,6 +59,7 @@
       "anyOf": [
         {"required": ["disc_ids"]},
         {"required": ["sha256"]},
+        {"required": ["sha1"]},
         {"required": ["md5"]},
         {"required": ["track_layout_sha256"]}
       ]

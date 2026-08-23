@@ -17,6 +17,57 @@ ACTION_LABELS = {
 
 ACTION_DETAILS = ("path", "mode", "value", "level", "version", "magic_word")
 
+SUMMARY_ACTIONS = {
+    "apply_ppf": "game patch",
+    "apply_xdelta": "game patch",
+    "set_libcrypt": "LibCrypt protection data",
+    "set_pops_config": "POPS compatibility settings",
+    "set_game_id": "compatible Game ID",
+    "set_region": "video region override",
+    "set_cdda": "CD audio mode",
+    "set_popsloader": "POPSLoader profile",
+    "set_undither": "dithering correction",
+}
+SUMMARY_WARNINGS = {
+    "Compatibility rule status is reported": (
+        "Compatibility profile has not been confirmed on hardware"
+    ),
+    "Skipped revision-sensitive patches without an exact source hash": (
+        "Game patch was not applied because this disc revision is unknown"
+    ),
+}
+
+
+def _source_summary(plan):
+    matches = {disc.conversion.source_match for disc in plan.discs}
+    if matches == {"exact"}:
+        return "Exact disc revision recognized"
+    if "game" in matches:
+        return "Game recognized; disc revision not verified"
+    return "Disc revision not recognized"
+
+
+def render_workflow_summary(plan):
+    """Render the automatic choices shown before conversion."""
+    actions = []
+    for disc in plan.discs:
+        for action in disc.conversion.actions:
+            label = SUMMARY_ACTIONS.get(action.kind)
+            if label and label not in actions:
+                actions.append(label)
+
+    target = "PSP" if plan.target == "psp" else "PS Vita / Adrenaline"
+    lines = [f"Source: {_source_summary(plan)}", f"Target: {target}"]
+    setup = ", ".join(actions) if actions else "standard conversion"
+    lines.append("Automatic setup: " + setup)
+    if plan.warnings:
+        warnings = (
+            SUMMARY_WARNINGS.get(warning, warning)
+            for warning in plan.warnings
+        )
+        lines.append("Attention: " + "; ".join(warnings))
+    return "\n".join(lines)
+
 
 def _action_line(action):
     detail = next(
@@ -69,6 +120,7 @@ def render_target_workflow_report(plan):
             (
                 f"Disc {number}: {disc.output_disc_id}, "
                 f"{description.format}, sha256 {description.sha256[:12]}",
+                f"Source match {number}: {conversion.source_match}",
                 f"Profile {number}: {conversion.rule_id or 'lossless-default'}",
             )
         )
