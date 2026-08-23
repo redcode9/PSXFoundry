@@ -79,6 +79,14 @@ class MacOSBuildScriptTests(unittest.TestCase):
         self.assertNotIn("/opt/homebrew", source)
         self.assertNotIn("brew install", source)
 
+    def test_chdman_build_excludes_unneeded_emulator_sources(self):
+        source = (MACOS_PACKAGING / "build-helpers.sh").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn('EMULATOR=0', source)
+        self.assertIn('"$project/Makefile"', source)
+        self.assertIn('config=release64 chdman', source)
+
     def test_verifier_rejects_newer_macos_and_nonportable_paths(self):
         source = (MACOS_PACKAGING / "verify-mach-o.sh").read_text(
             encoding="utf-8"

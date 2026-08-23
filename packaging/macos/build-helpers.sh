@@ -275,17 +275,23 @@ build_xdelta3() {
 
 build_chdman() {
     local source="$WORK_ROOT/mame-source"
+    local project="build/projects/mac/mame/gmake-osx-clang"
+    local -a options=(
+        REGENIE=1
+        TOOLS=1
+        EMULATOR=0
+        OSD=mac
+        PTR64=1
+        OVERRIDE_CC=clang
+        OVERRIDE_CXX=clang++
+        "ARCHOPTS=-arch arm64 -mmacosx-version-min=$MINIMUM_MACOS"
+    )
     extract_archive mame-chdman "$source"
     say 'building MAME CHDMan (this is the longest helper build)'
-    make -C "$source" -j "$JOBS" \
-        REGENIE=1 \
-        TOOLS=1 \
-        EMULATOR=0 \
-        OSD=mac \
-        PTR64=1 \
-        OVERRIDE_CC=clang \
-        OVERRIDE_CXX=clang++ \
-        ARCHOPTS="-arch arm64 -mmacosx-version-min=$MINIMUM_MACOS"
+    make -C "$source" "${options[@]}" \
+        build/generated/version.cpp \
+        "$project/Makefile"
+    make -C "$source/$project" -j "$JOBS" config=release64 chdman
     install_helper "$source/chdman" chdman
 }
 
