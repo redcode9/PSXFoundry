@@ -3,10 +3,20 @@
 from __future__ import annotations
 
 import sys
+import tkinter as tk
 import traceback
 from typing import Type
 
 from popfe_runtime import RuntimePaths
+
+
+class FinishedDialog(tk.Toplevel):
+    def __init__(self, root, message):
+        super().__init__(root)
+        tk.Label(self, text=message).pack(
+            fill="both", expand=True, padx=20, pady=20
+        )
+        tk.Button(self, text="Continue", command=self.destroy).pack(side="bottom")
 
 
 def write_exception_log(

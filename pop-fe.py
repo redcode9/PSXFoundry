@@ -86,6 +86,7 @@ from psxfoundry.psp_workflow import (
     verify_planned_patch_sources,
 )
 from psxfoundry.report import render_target_workflow_report
+from psxfoundry.registry import file_sha256
 from psxfoundry.validation import validate_eboot, validate_generated_eboot
 from psxfoundry.work import atomic_output, clone_or_copy
 from ppf import ApplyPPF
@@ -2313,7 +2314,7 @@ def convert_snd0_to_at3(snd0, at3, duration, max_size, subdir = './'):
         except:
             print(
                 'ATRACDENC not found: cannot create SND0.AT3. '
-                'See docs/source-build.md for build requirements.'
+                'See CONTRIBUTING.md for build requirements.'
             )
             return None
         print('Converting EA3 to AT3 file') if verbose else None
@@ -4365,19 +4366,17 @@ def apply_ppf_fixes(real_disc_ids, cue_files, img_files, md5_sums, subdir, tag=N
     return cue_files, img_files
 
 
-def apply_planned_patches(cue_files, img_files, patches_by_disc, subdir):
-    """Apply only the patches selected by an exact conversion plan."""
+def isolate_target_inputs(cue_files, img_files, patches_by_disc, target_dir):
+    """Clone target inputs, then apply only their planned patches."""
     if len(patches_by_disc) != len(img_files):
         raise ValueError('patches_by_disc must have one entry per disc')
 
     cue_files = list(cue_files)
     img_files = list(img_files)
+    # Conversion helpers may rewrite images, so every target gets its own clone.
     for idx, patches in enumerate(patches_by_disc):
-        if not patches:
-            continue
-
-        patched_cue = subdir + 'PLAN%02x.cue' % idx
-        patched_image = subdir + 'PLAN%02x.bin' % idx
+        patched_cue = target_dir + 'DISC%02x.cue' % idx
+        patched_image = target_dir + 'DISC%02x.bin' % idx
         copy_file(img_files[idx], patched_image)
         temp_files.append(patched_image)
         with open(cue_files[idx], 'r') as source:
@@ -4393,11 +4392,7 @@ def apply_planned_patches(cue_files, img_files, patches_by_disc, subdir):
 
         for patch in patches:
             patch_path = str(patch.path)
-            digest = hashlib.sha256()
-            with open(patch_path, 'rb') as handle:
-                for chunk in iter(lambda: handle.read(1024 * 1024), b''):
-                    digest.update(chunk)
-            if digest.hexdigest() != patch.sha256:
+            if file_sha256(Path(patch_path)) != patch.sha256:
                 raise ValueError('compatibility patch hash changed: ' + patch_path)
             if patch.kind == 'apply_ppf':
                 ApplyPPF(patched_image, patch_path)
@@ -4423,7 +4418,7 @@ def prepare_target_inputs(
     target_dir = os.path.join(subdir, 'targets', plan.target) + os.sep
     os.makedirs(target_dir, exist_ok=True)
     verify_planned_patch_sources(plan, img_files)
-    working_cues, working_images = apply_planned_patches(
+    working_cues, working_images = isolate_target_inputs(
         cue_files,
         img_files,
         tuple(disc.patches for disc in plan.discs),
@@ -4578,7 +4573,7 @@ def generate_aea_files(cue_files, img_files, subdir):
             except:
                 print(
                     'ATRACDENC not found: creating EBOOT.PBP without CD audio. '
-                    'See docs/source-build.md for build requirements.'
+                    'See CONTRIBUTING.md for build requirements.'
                 )
                 break
             aea_files[d].append(aea_file)    
@@ -4615,7 +4610,7 @@ def process_disk_file(cue_file, idx, temp_files, subdir='./'):
         except:
             print(
                 'CHDMan not found: cannot convert CHD input. '
-                'See docs/source-build.md for build requirements.'
+                'See CONTRIBUTING.md for build requirements.'
             )
             os._exit(10)
         cue_file = tmpcue
@@ -4673,7 +4668,7 @@ def process_disk_file(cue_file, idx, temp_files, subdir='./'):
         try:
             popfe_runtime.tool_path('binmerge', required=True)
         except:
-            raise Exception('binmerge is required for multi-bin discs. See docs/source-build.md for build requirements.')
+            raise Exception('binmerge is required for multi-bin discs. See CONTRIBUTING.md for build requirements.')
         mb = 'MB%d' % (idx)
         temp_files.append(mb)
         subprocess.run(

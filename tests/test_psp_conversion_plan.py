@@ -11,7 +11,7 @@ from psxfoundry.psp_workflow import (
     read_planned_configs,
     verify_planned_patch_sources,
 )
-from psxfoundry.report import render_psp_workflow_report
+from psxfoundry.report import render_target_workflow_report
 from psxfoundry.registry import (
     CompatibilityAction,
     CompatibilityRegistry,
@@ -173,7 +173,7 @@ class PspConversionPlanTests(unittest.TestCase):
             self.assertFalse(plan.use_cdda)
             self.assertTrue(plan.undither)
 
-            report = render_psp_workflow_report(plan)
+            report = render_target_workflow_report(plan)
             self.assertIn("Target: adrenaline", report)
             self.assertIn("Profile 1: test-adrenaline-scus00001", report)
 

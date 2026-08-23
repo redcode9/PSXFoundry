@@ -69,14 +69,22 @@ class GuiPathTests(unittest.TestCase):
         source = (REPOSITORY_ROOT / "pop-fe-psp.py").read_text(encoding="utf-8")
         for marker in (
             "build_psp_plan",
-            "apply_planned_patches",
+            "prepare_target_inputs",
             "validate_generated_eboot",
-            "render_psp_workflow_report",
+            "render_target_workflow_report",
             "no_libcrypt=True",
         ):
             with self.subTest(marker=marker):
                 self.assertIn(marker, source)
         self.assertNotIn("popfe.apply_ppf_fixes", source)
+
+    def test_gui_apps_share_dialogs_and_use_specific_class_names(self):
+        psp_source = (REPOSITORY_ROOT / "pop-fe-psp.py").read_text(encoding="utf-8")
+        ps3_source = (REPOSITORY_ROOT / "pop-fe-ps3.py").read_text(encoding="utf-8")
+
+        self.assertIn("class PspApp:", psp_source)
+        self.assertIn("class Ps3App:", ps3_source)
+        self.assertNotIn("class FinishedDialog", psp_source + ps3_source)
 
     def test_psp_gui_keeps_compatibility_overrides_collapsed(self):
         ui = ET.parse(REPOSITORY_ROOT / "pop-fe-psp.ui")
@@ -95,8 +103,7 @@ class GuiPathTests(unittest.TestCase):
         source = (REPOSITORY_ROOT / "pop-fe-ps3.py").read_text(encoding="utf-8")
         for marker in (
             "build_target_plan",
-            "verify_planned_patch_sources",
-            "apply_planned_patches",
+            "prepare_target_inputs",
             "read_ps3_configs",
             "render_target_workflow_report",
             "no_libcrypt=True",

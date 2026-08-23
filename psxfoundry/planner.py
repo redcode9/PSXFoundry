@@ -3,7 +3,7 @@
 from dataclasses import dataclass
 
 from psxfoundry.disc import DiscDescription
-from psxfoundry.pbp import PSISO_BLOCK_SIZE
+from psxfoundry.psp import padded_decoded_size
 from psxfoundry.registry import (
     ACTION_ORDER,
     CompatibilityAction,
@@ -67,19 +67,6 @@ def _merge_actions(rule_actions, discs, target):
     return tuple(sorted(unique, key=lambda action: ACTION_ORDER[action.kind]))
 
 
-def _decoded_size(disc, actions):
-    cdda = next((action for action in actions if action.kind == "set_cdda"), None)
-    if cdda is not None and cdda.get("mode") == "atrac3":
-        data_tracks = [track for track in disc.tracks if track.mode != "AUDIO"]
-        if len(data_tracks) == 1:
-            size = (data_tracks[0].stop_sector + 1) * 2352
-        else:
-            size = disc.size
-    else:
-        size = disc.size
-    return ((size + PSISO_BLOCK_SIZE - 1) // PSISO_BLOCK_SIZE) * PSISO_BLOCK_SIZE
-
-
 def plan_conversion(discs, target, registry):
     """Select one rule and add lossless defaults for uncovered inputs."""
     discs = tuple(discs)
@@ -119,7 +106,11 @@ def plan_conversion(discs, target, registry):
             )
 
     actions = _merge_actions(rule_actions, discs, target)
-    expected_sizes = tuple(_decoded_size(disc, actions) for disc in discs if disc.complete)
+    cdda = next((action for action in actions if action.kind == "set_cdda"), None)
+    use_cdda = cdda is None or cdda.get("mode") != "atrac3"
+    expected_sizes = tuple(
+        padded_decoded_size(disc, use_cdda) for disc in discs if disc.complete
+    )
     if len(expected_sizes) != len(discs):
         expected_sizes = ()
 

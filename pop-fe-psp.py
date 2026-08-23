@@ -1,4 +1,3 @@
-#!/usr/bin/python3
 #!/usr/bin/env python
 
 import argparse
@@ -14,7 +13,7 @@ import tkinter.ttk as ttk
 import zipfile
 from pathlib import Path
 from tkinter import filedialog, messagebox
-from popfe_gui import install_tk_error_handler
+from popfe_gui import FinishedDialog, install_tk_error_handler
 from popfe_psp_import import FolderImportError, scan_psp_folder
 from popfe_runtime import runtime as popfe_runtime
 from psxfoundry.cache import AnalysisCache
@@ -23,9 +22,8 @@ from psxfoundry.psp_workflow import (
     execution_decoded_sizes,
     expected_decoded_hashes,
     read_planned_configs,
-    verify_planned_patch_sources,
 )
-from psxfoundry.report import render_psp_workflow_report
+from psxfoundry.report import render_target_workflow_report
 from psxfoundry.validation import EbootExpectation, validate_generated_eboot
 
 have_pytube = False
@@ -64,16 +62,7 @@ TARGET_VALUES = {
 }
 
 
-class FinishedDialog(tk.Toplevel):
-    def __init__(self, root):
-        tk.Toplevel.__init__(self, root)
-        label = tk.Label(self, text="Finished creating EBOOT")
-        label.pack(fill="both", expand=True, padx=20, pady=20)
-
-        button = tk.Button(self, text="Continue", command=self.destroy)
-        button.pack(side="bottom")
-
-class PopFePs3App:
+class PspApp:
     def __init__(self, master=None):
         self.myrect = None
         self.cue_file_orig = None
@@ -165,7 +154,6 @@ class PopFePs3App:
             1, weight=1
         )
 
-        # Tooltips
         self.use_psx_undither = builder.get_object("use_psx_undither")
         tooltip.create(self.use_psx_undither, "Use PSX-Undither to patch the game.\nThis will remove dithering effects.")
         self.pic1aslogo = builder.get_object("pic1aslogo")
@@ -181,9 +169,9 @@ class PopFePs3App:
         self.disable_snd0 = builder.get_object("disable_snd0")
         tooltip.create(self.disable_snd0 , "Disable the SND0 audio that would play when the game icon is\nhighlighted on the XMB")
         self.disable_pic1 = builder.get_object("disable_pic1")
-        tooltip.create(self.disable_pic1 , "Disable the background image that would show up on the XMB\nwhen the gameicon is highlighted")
+        tooltip.create(self.disable_pic1 , "Disable the background image shown when the game icon is highlighted on the XMB")
         self.disable_pic0 = builder.get_object("disable_pic0")
-        tooltip.create(self.disable_pic0 , "Disable the game logo that would show up on the XMB\nwhen the gameicon is highlighted")
+        tooltip.create(self.disable_pic0 , "Disable the game logo shown when the game icon is highlighted on the XMB")
         self.pic0scaling = builder.get_object("pic0scaling")
         tooltip.create(self.pic0scaling , "Change the scaling of the game logo.\n1.0 is 100% of original.\n0.5 is 50%, etc.")
         self.pic0xoffset = builder.get_object("pic0xoffset")
@@ -191,11 +179,8 @@ class PopFePs3App:
         self.pic0yoffset = builder.get_object("pic0yoffset")
         tooltip.create(self.pic0yoffset , "Shift the placement of pic0 vertically.\n0.1 means shift 10% down.\n-0.1 means shift 10% up.\nThe resulting image is bounded by the maximum size of the pic0 box.")
         self.ntsc_u_icon0 = builder.get_object("ntsc_u_icon0")
-        tooltip.create(self.ntsc_u_icon0, "Use a NTSC-U PSN style frame for ICON0.\nThis has a thicker left edge with the text \"Playstation\" running along it\nand requires specially cropped covers to be manuallt provided for ICON0.\nPlease crop a cover image to 60x67 pixels and select it by clicking the ICON0 widget.")
-        #self. = builder.get_object("")
-        #tooltip.create(self. , "")
-        
-        
+        tooltip.create(self.ntsc_u_icon0, "Use an NTSC-U PSN-style frame for ICON0.\nProvide a 60x67-pixel cover through the ICON0 control.")
+
         self._theme = ''
         o = ['']
         for theme in themes:
@@ -965,13 +950,6 @@ class PopFePs3App:
             print('DISC', disc_ids[0])
             print('TITLE', title)
 
-            subchannels = tuple(
-                popfe.generate_subchannels(disc.libcrypt_magic_word)
-                if disc.libcrypt_magic_word is not None
-                else None
-                for disc in plan.discs
-            )
-
             snd0 = self.builder.get_variable('snd0_variable').get()
             if snd0[:24] == 'https://www.youtube.com/':
                 snd0 = popfe.get_snd0_from_link(snd0, subdir=self.subdir)
@@ -993,26 +971,21 @@ class PopFePs3App:
             else:
                 ebootdir = '.'
 
-            verify_planned_patch_sources(plan, self.img_files)
-            working_cues, working_images = popfe.apply_planned_patches(
-                self.cue_files,
-                self.img_files,
-                tuple(disc.patches for disc in plan.discs),
-                self.subdir,
-            )
-
             undither = (
                 self.builder.get_variable('psx_undither_variable').get() == 'on'
             )
             ntsc = self.builder.get_variable('force_ntsc_variable').get() == 'on'
             cdda = self.builder.get_variable('cdda_variable').get() == 'on'
-            if undither:
-                working_cues, working_images = popfe.patch_undither(
+            working_cues, working_images, _, subchannels = (
+                popfe.prepare_target_inputs(
+                    plan,
+                    self.cue_files,
+                    self.img_files,
                     self.real_disc_ids,
-                    working_cues,
-                    working_images,
-                    subdir=self.subdir,
+                    self.subdir,
+                    undither=undither,
                 )
+            )
 
             aea_files, _ = popfe.generate_aea_files(
                 working_cues, working_images, self.subdir
@@ -1085,7 +1058,7 @@ class PopFePs3App:
                 ),
                 report_path=report_path,
             )
-            report = render_psp_workflow_report(plan)
+            report = render_target_workflow_report(plan)
             override_lines = []
             if disc_ids != plan.output_disc_ids:
                 override_lines.append('- Disc IDs: ' + ', '.join(disc_ids))
@@ -1122,7 +1095,7 @@ class PopFePs3App:
         finally:
             self.master.config(cursor='')
 
-        d = FinishedDialog(self.master)
+        d = FinishedDialog(self.master, "Finished creating EBOOT")
         self.master.wait_window(d)
         self.init_data()
 
@@ -1163,7 +1136,7 @@ if __name__ == "__main__":
         install_tk_error_handler(
             root, popfe_runtime, "psp", "PSXFoundry PSP Error"
         )
-    app = PopFePs3App(root)
+    app = PspApp(root)
     root.title('PSXFoundry PSP')
     root.minsize(820, 560)
     root.rowconfigure(0, weight=1)

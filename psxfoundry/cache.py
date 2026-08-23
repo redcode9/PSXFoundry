@@ -2,11 +2,10 @@
 
 import hashlib
 import json
-import os
 from pathlib import Path, PurePosixPath
-import tempfile
 
 from psxfoundry.disc import DiscDescription, TrackDescription
+from psxfoundry.work import atomic_write
 
 
 SCHEMA_VERSION = 1
@@ -19,27 +18,6 @@ def _canonical(data):
         sort_keys=True,
         separators=(",", ":"),
     ).encode("utf-8")
-
-
-def _atomic_write(path, data):
-    path.parent.mkdir(parents=True, exist_ok=True)
-    descriptor, temporary = tempfile.mkstemp(
-        prefix=path.name + ".",
-        suffix=".tmp",
-        dir=path.parent,
-    )
-    try:
-        with os.fdopen(descriptor, "wb") as handle:
-            handle.write(data)
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(temporary, path)
-    except BaseException:
-        try:
-            os.unlink(temporary)
-        except OSError:
-            pass
-        raise
 
 
 def _state(path):
@@ -208,7 +186,7 @@ class AnalysisCache:
         object_digest = hashlib.sha256(payload).hexdigest()
         object_path = self.objects / (object_digest + ".json")
         if not object_path.is_file():
-            _atomic_write(object_path, payload)
+            atomic_write(object_path, payload)
         index_data = {
             "schema_version": SCHEMA_VERSION,
             "object": object_digest,
@@ -216,7 +194,7 @@ class AnalysisCache:
                 _state(path) for path in analysis_dependencies(description)
             ],
         }
-        _atomic_write(self._index_path(description.source), _canonical(index_data))
+        atomic_write(self._index_path(description.source), _canonical(index_data))
         return description
 
     def analyze(self, source, analyzer):

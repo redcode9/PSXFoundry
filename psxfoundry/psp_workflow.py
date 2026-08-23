@@ -9,10 +9,12 @@ from popfe_runtime import runtime as popfe_runtime
 from psxfoundry.disc import DiscDescription, analyze_disc
 from psxfoundry.planner import ConversionPlan, plan_conversion
 from psxfoundry.popfe_registry import AdapterIssue, adapt_popfe
+from psxfoundry.psp import decoded_source_size, padded_decoded_size
 from psxfoundry.registry import (
     CompatibilityAction,
     CompatibilityRegistry,
     RegistryError,
+    file_sha256,
     load_registry,
 )
 
@@ -151,11 +153,6 @@ def load_compatibility_registry():
     return _combined_registry(popfe_runtime.resource_root)
 
 
-def load_psp_registry():
-    """Return the shared compatibility registry for PSP workflows."""
-    return load_compatibility_registry()
-
-
 def _single_action(actions, kind):
     matches = [action for action in actions if action.kind == kind]
     if len(matches) > 1:
@@ -285,10 +282,6 @@ def build_psp_plan(paths, target="psp", **kwargs):
     return build_target_plan(paths, target, **kwargs)
 
 
-PspDiscPlan = TargetDiscPlan
-PspWorkflowPlan = TargetWorkflowPlan
-
-
 def read_planned_configs(plan, *, force_ntsc=None, cdda=None):
     """Read the POPS configs and apply the selected global config bits."""
     force_ntsc = plan.force_ntsc if force_ntsc is None else force_ntsc
@@ -299,6 +292,7 @@ def read_planned_configs(plan, *, force_ntsc=None, cdda=None):
             configs.append(None)
             continue
         config = bytearray(disc.config_path.read_bytes())
+        # POPS stores each setting in both halves of the config block.
         if force_ntsc:
             if len(config) > 0x0B:
                 config[0x0B] |= 0x10
@@ -327,6 +321,7 @@ def read_ps3_configs(plan):
             raise RegistryError(
                 f"invalid PS3 config command file {disc.config_path}"
             )
+        # The first eight bytes are the config container header.
         configs.append(data[8:])
     return tuple(configs)
 
@@ -339,25 +334,10 @@ def verify_planned_patch_sources(plan, image_paths):
     for disc, image_path in zip(plan.discs, image_paths):
         if not disc.patches:
             continue
-        digest = hashlib.sha256()
-        with image_path.open("rb") as handle:
-            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-                digest.update(chunk)
-        if digest.hexdigest() != disc.description.sha256:
+        if file_sha256(image_path) != disc.description.sha256:
             raise ValueError(
                 f"disc changed after analysis; refusing planned patch: {image_path}"
             )
-
-
-def _decoded_source_size(disc, use_cdda):
-    if use_cdda or not disc.description.has_audio:
-        return disc.description.size
-    data_tracks = [
-        track for track in disc.description.tracks if track.mode != "AUDIO"
-    ]
-    if len(data_tracks) == 1:
-        return (data_tracks[0].stop_sector + 1) * 2352
-    return disc.description.size
 
 
 def execution_decoded_sizes(plan, *, use_cdda=None):
@@ -365,12 +345,9 @@ def execution_decoded_sizes(plan, *, use_cdda=None):
     if any(not disc.description.complete for disc in plan.discs):
         return ()
     use_cdda = plan.use_cdda if use_cdda is None else use_cdda
-    block_size = 16 * 2352
     return tuple(
-        (size + block_size - 1) // block_size * block_size
-        for size in (
-            _decoded_source_size(disc, use_cdda) for disc in plan.discs
-        )
+        padded_decoded_size(disc.description, use_cdda)
+        for disc in plan.discs
     )
 
 
@@ -389,7 +366,7 @@ def expected_decoded_hashes(plan, image_paths, *, use_cdda=None):
         plan.discs, image_paths, expected_sizes
     ):
         digest = hashlib.sha256()
-        source_size = _decoded_source_size(disc, use_cdda)
+        source_size = decoded_source_size(disc.description, use_cdda)
         remaining = source_size
         with image_path.open("rb") as handle:
             while remaining:

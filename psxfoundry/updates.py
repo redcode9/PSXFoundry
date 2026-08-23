@@ -13,7 +13,8 @@ import zipfile
 from Crypto.PublicKey import ECC
 from Crypto.Signature import eddsa
 
-from psxfoundry.registry import parse_catalog, verify_rule_assets
+from psxfoundry.registry import file_sha256, parse_catalog, verify_rule_assets
+from psxfoundry.work import atomic_output, atomic_write
 
 
 SCHEMA_VERSION = 1
@@ -51,14 +52,6 @@ def _safe_path(value):
     return path
 
 
-def _sha256(path):
-    digest = hashlib.sha256()
-    with Path(path).open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
 def _manifest(version, files):
     if not VERSION_PATTERN.fullmatch(version):
         raise RegistryUpdateError("registry version is invalid")
@@ -70,7 +63,7 @@ def _manifest(version, files):
             {
                 "path": relative,
                 "size": path.stat().st_size,
-                "sha256": _sha256(path),
+                "sha256": file_sha256(path),
             }
         )
     return {
@@ -129,6 +122,7 @@ def collect_registry_files(repository_root):
 
 
 def _zip_info(name):
+    # Fixed metadata makes signed packs reproducible across build machines.
     info = zipfile.ZipInfo(name, date_time=(1980, 1, 1, 0, 0, 0))
     info.compress_type = zipfile.ZIP_DEFLATED
     info.create_system = 3
@@ -143,14 +137,7 @@ def build_registry_pack(output, version, repository_root, private_key):
     manifest = _manifest(version, files)
     manifest_data = _canonical(manifest)
     signature = sign_manifest(manifest, private_key)
-    output.parent.mkdir(parents=True, exist_ok=True)
-    descriptor, temporary = tempfile.mkstemp(
-        prefix=output.name + ".",
-        suffix=".tmp",
-        dir=output.parent,
-    )
-    os.close(descriptor)
-    try:
+    with atomic_output(output) as temporary:
         with zipfile.ZipFile(
             temporary,
             "w",
@@ -164,13 +151,6 @@ def build_registry_pack(output, version, repository_root, private_key):
                     _zip_info("files/" + relative),
                     Path(path).read_bytes(),
                 )
-        os.replace(temporary, output)
-    except BaseException:
-        try:
-            os.unlink(temporary)
-        except OSError:
-            pass
-        raise
     return RegistryPack(
         version,
         tuple(
@@ -272,25 +252,7 @@ def verify_registry_pack(pack_path, public_key):
 
 
 def _atomic_json(path, data):
-    path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    descriptor, temporary = tempfile.mkstemp(
-        prefix=path.name + ".",
-        suffix=".tmp",
-        dir=path.parent,
-    )
-    try:
-        with os.fdopen(descriptor, "wb") as handle:
-            handle.write(_canonical(data))
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(temporary, path)
-    except BaseException:
-        try:
-            os.unlink(temporary)
-        except OSError:
-            pass
-        raise
+    atomic_write(path, _canonical(data))
 
 
 def verify_installed_registry(directory, public_key):
@@ -313,7 +275,7 @@ def verify_installed_registry(directory, public_key):
             raise RegistryUpdateError(
                 f"installed registry file size mismatch: {relative}"
             )
-        if _sha256(path) != expected_hash:
+        if file_sha256(path) != expected_hash:
             raise RegistryUpdateError(
                 f"installed registry file hash mismatch: {relative}"
             )

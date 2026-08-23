@@ -1,5 +1,10 @@
 """PSP conversion decisions."""
 
+from psxfoundry.pbp import PSISO_BLOCK_SIZE
+
+
+RAW_SECTOR_SIZE = 2352
+
 
 def _bcd(value):
     return value % 10 + 16 * ((value // 10) % 10)
@@ -17,7 +22,7 @@ def lead_out_msf(sector_count, pregap_sectors=150):
     return _bcd(minute), _bcd(second), _bcd(frame)
 
 
-def track_end_offset(track, sector_length=2352):
+def track_end_offset(track, sector_length=RAW_SECTOR_SIZE):
     """Return the byte offset immediately after a track's final sector."""
     indexes = track.get("INDEX", {})
     if not indexes:
@@ -42,3 +47,20 @@ def whole_disc_modes(disc_count, aea_files, use_cdda=False):
         atrac_tracks = aea_files[index] if index < len(aea_files) else []
         modes.append(not bool(atrac_tracks))
     return modes
+
+
+def decoded_source_size(disc, use_cdda):
+    """Return source bytes stored in PSISO for the selected audio mode."""
+    if use_cdda or not disc.has_audio:
+        return disc.size
+    # ATRAC3 tracks live outside PSISO, so one data track can end PSISO early.
+    data_tracks = [track for track in disc.tracks if track.mode != "AUDIO"]
+    if len(data_tracks) == 1:
+        return (data_tracks[0].stop_sector + 1) * RAW_SECTOR_SIZE
+    return disc.size
+
+
+def padded_decoded_size(disc, use_cdda):
+    """Return the decoded size after PSISO block padding."""
+    size = decoded_source_size(disc, use_cdda)
+    return (size + PSISO_BLOCK_SIZE - 1) // PSISO_BLOCK_SIZE * PSISO_BLOCK_SIZE

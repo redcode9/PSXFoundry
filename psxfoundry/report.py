@@ -15,6 +15,26 @@ ACTION_LABELS = {
     "set_undither": "Set dithering correction",
 }
 
+ACTION_DETAILS = ("path", "mode", "value", "level", "version", "magic_word")
+
+
+def _action_line(action):
+    detail = next(
+        (action.get(name) for name in ACTION_DETAILS if action.get(name) is not None),
+        None,
+    )
+    label = ACTION_LABELS[action.kind]
+    return f"- {label}: {detail}" if detail is not None else f"- {label}"
+
+
+def _append_notes(lines, plan):
+    if plan.warnings:
+        lines.append("Warnings:")
+        lines.extend(f"- {warning}" for warning in plan.warnings)
+    if plan.assumptions:
+        lines.append("Unverified:")
+        lines.extend(f"- {assumption}" for assumption in plan.assumptions)
+
 
 def render_plan_report(plan):
     """Render one immutable plan as plain text."""
@@ -30,23 +50,8 @@ def render_plan_report(plan):
             f"Disc {number}: {disc_id}, {disc.format}, sha256 {disc.sha256[:12]}"
         )
     lines.append("Actions:")
-    for action in plan.actions:
-        detail = next(
-            (
-                action.get(name)
-                for name in ("path", "mode", "value", "level", "version", "magic_word")
-                if action.get(name) is not None
-            ),
-            None,
-        )
-        label = ACTION_LABELS[action.kind]
-        lines.append(f"- {label}: {detail}" if detail is not None else f"- {label}")
-    if plan.warnings:
-        lines.append("Warnings:")
-        lines.extend(f"- {warning}" for warning in plan.warnings)
-    if plan.assumptions:
-        lines.append("Unverified:")
-        lines.extend(f"- {assumption}" for assumption in plan.assumptions)
+    lines.extend(_action_line(action) for action in plan.actions)
+    _append_notes(lines, plan)
     return "\n".join(lines) + "\n"
 
 
@@ -67,35 +72,6 @@ def render_target_workflow_report(plan):
                 f"Profile {number}: {conversion.rule_id or 'lossless-default'}",
             )
         )
-        for action in conversion.actions:
-            detail = next(
-                (
-                    action.get(name)
-                    for name in (
-                        "path",
-                        "mode",
-                        "value",
-                        "level",
-                        "version",
-                        "magic_word",
-                    )
-                    if action.get(name) is not None
-                ),
-                None,
-            )
-            label = ACTION_LABELS[action.kind]
-            lines.append(
-                f"- {label}: {detail}" if detail is not None else f"- {label}"
-            )
-    if plan.warnings:
-        lines.append("Warnings:")
-        lines.extend(f"- {warning}" for warning in plan.warnings)
-    if plan.assumptions:
-        lines.append("Unverified:")
-        lines.extend(f"- {assumption}" for assumption in plan.assumptions)
+        lines.extend(_action_line(action) for action in conversion.actions)
+    _append_notes(lines, plan)
     return "\n".join(lines) + "\n"
-
-
-def render_psp_workflow_report(plan):
-    """Render one PSP or Adrenaline workflow."""
-    return render_target_workflow_report(plan)

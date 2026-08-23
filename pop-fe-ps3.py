@@ -1,4 +1,3 @@
-#!/usr/bin/python3
 #!/usr/bin/env python
 
 import argparse
@@ -16,13 +15,12 @@ import tkinter.ttk as ttk
 from tkinterdnd2 import *
 import zipfile
 from pathlib import Path
-from popfe_gui import install_tk_error_handler
+from popfe_gui import FinishedDialog, install_tk_error_handler
 from popfe_runtime import runtime as popfe_runtime
 from psxfoundry.cache import AnalysisCache
 from psxfoundry.psp_workflow import (
     build_target_plan,
     read_ps3_configs,
-    verify_planned_patch_sources,
 )
 from psxfoundry.report import render_target_workflow_report
 
@@ -54,16 +52,7 @@ PREFERENCES_PATH = popfe_runtime.application_preference_path(
 )
 
 
-class FinishedDialog(tk.Toplevel):
-    def __init__(self, root):
-        tk.Toplevel.__init__(self, root)
-        label = tk.Label(self, text="Finished creating PKG")
-        label.pack(fill="both", expand=True, padx=20, pady=20)
-
-        button = tk.Button(self, text="Continue", command=self.destroy)
-        button.pack(side="bottom")
-
-class PopFePs3App:
+class Ps3App:
     def __init__(self, master=None):
         self.myrect = None
         self.cue_file_orig = None
@@ -154,13 +143,12 @@ class PopFePs3App:
         c.drop_target_register(DND_FILES)
         c.dnd_bind('<<Drop>>', self.on_pic1_dropped)
 
-        # Tooltips
         self.use_psx_undither = builder.get_object("use_psx_undither")
         tooltip.create(self.use_psx_undither, "Use PSX-Undither to patch the game.\nThis will remove dithering effects.")
         self.allow_swapdisc = builder.get_object("allow_swapdisc")
         tooltip.create(self.allow_swapdisc, "Allow swapping disks even if the game is not requesting it.\nThis is only needed on a handful of games that do not\nuse the normal way to handle multi-discs.")
         self.force_newemu = builder.get_object("force_newemu")
-        tooltip.create(self.force_newemu , "Use the psx_newemu emulator instead of psx_netemu\nVery few games need this.\nDo not enable unless you must since the psx_newemu emulator\nhas worse compatibility than psx_newemu")
+        tooltip.create(self.force_newemu , "Use ps1_newemu instead of ps1_netemu.\nEnable only for a known compatibility requirement.")
         self.force_ntsc = builder.get_object("force_ntsc")
         tooltip.create(self.force_ntsc , "Force the emulator to NTSC. This can cause the game to run\nat the wrong speed when used on a PAL console.")
         self.disc_as_icon0 = builder.get_object("disc_as_icon0")
@@ -172,18 +160,15 @@ class PopFePs3App:
         self.disable_snd0 = builder.get_object("disable_snd0")
         tooltip.create(self.disable_snd0 , "Disable the SND0 audio that would play when the game icon is\nhighlighted on the XMB")
         self.disable_pic1 = builder.get_object("disable_pic1")
-        tooltip.create(self.disable_pic1 , "Disable the background image that would show up on the XMB\nwhen the gameicon is highlighted")
+        tooltip.create(self.disable_pic1 , "Disable the background image shown when the game icon is highlighted on the XMB")
         self.disable_pic0 = builder.get_object("disable_pic0")
-        tooltip.create(self.disable_pic0 , "Disable the game logo that would show up on the XMB\nwhen the gameicon is highlighted")
+        tooltip.create(self.disable_pic0 , "Disable the game logo shown when the game icon is highlighted on the XMB")
         self.pic0scaling = builder.get_object("pic0scaling")
         tooltip.create(self.pic0scaling , "Change the scaling of the game logo.\n1.0 is 100% of original.\n0.5 is 50%, etc.")
         self.pic0xoffset = builder.get_object("pic0xoffset")
         tooltip.create(self.pic0xoffset , "Shift the placement of pic0 horizontally.\n0.1 means shift 10% to the right.\n-0.1 means shift 10% to the left.\nThe resulting image is bounded by the maximum size of the pic0 box.")
         self.pic0yoffset = builder.get_object("pic0yoffset")
         tooltip.create(self.pic0yoffset , "Shift the placement of pic0 vertically.\n0.1 means shift 10% down.\n-0.1 means shift 10% up.\nThe resulting image is bounded by the maximum size of the pic0 box.")
-        #self. = builder.get_object("")
-        #tooltip.create(self. , "")
-
         self._theme = ''
         o = ['']
         for theme in themes:
@@ -874,16 +859,6 @@ class PopFePs3App:
         print('DISC', disc_id)
         print('TITLE', title)
         resolution = 1
-        magic_word = [
-            disc.libcrypt_magic_word or 0 for disc in plan.discs
-        ]
-        subchannels = [
-            popfe.generate_subchannels(disc.libcrypt_magic_word)
-            if disc.libcrypt_magic_word is not None
-            else None
-            for disc in plan.discs
-        ]
-                
         if disc_id[:3] == 'SLE' or disc_id[:3] == 'SCE':
             print('SLES/SCES PAL game. Default resolution set to 2 (640x512)') if verbose else None
             resolution = 2
@@ -911,12 +886,16 @@ class PopFePs3App:
         else:
             manual = None
 
-        verify_planned_patch_sources(plan, self.img_files)
-        working_cues, working_images = popfe.apply_planned_patches(
-            self.cue_files,
-            self.img_files,
-            tuple(disc.patches for disc in plan.discs),
-            self.subdir,
+        undither = self.builder.get_variable('psx_undither_variable').get() == 'on'
+        working_cues, working_images, magic_word, subchannels = (
+            popfe.prepare_target_inputs(
+                plan,
+                self.cue_files,
+                self.img_files,
+                self.real_disc_ids,
+                self.subdir,
+                undither=undither,
+            )
         )
 
         aea_files, extra_data_tracks = popfe.generate_aea_files(
@@ -925,7 +904,6 @@ class PopFePs3App:
         if extra_data_tracks:
             self.data_track_only = 'on'
         
-        undither = self.builder.get_variable('psx_undither_variable').get() == 'on'
         newemu   = self.builder.get_variable('force_newemu_variable').get() == 'on'
         swap     = self.builder.get_variable('allow_discswap_variable').get() == 'on'
         ntsc     = self.builder.get_variable('force_ntsc_variable').get() == 'on'
@@ -939,7 +917,7 @@ class PopFePs3App:
                          resolution, subdir=self.subdir, snd0=snd0,
                          subchannels=subchannels, manual=manual,
                          whole_disk=True if self.data_track_only=='off' else False,
-                         psx_undither=undither,
+                         psx_undither=False,
                          ps1_newemu=newemu, enable_swap=swap, force_ntsc=ntsc,
                          no_libcrypt=True,
                          planned_configs=read_ps3_configs(plan))
@@ -949,7 +927,7 @@ class PopFePs3App:
         )
         self.master.config(cursor='')
 
-        d = FinishedDialog(self.master)
+        d = FinishedDialog(self.master, "Finished creating PKG")
         self.master.wait_window(d)
         self.init_data()
 
@@ -976,7 +954,7 @@ if __name__ == "__main__":
         install_tk_error_handler(
             root, popfe_runtime, "ps3", "PSXFoundry PS3 Error"
         )
-    app = PopFePs3App(root)
+    app = Ps3App(root)
     root.title('PSXFoundry PS3')
     if smoke_test:
         root.update_idletasks()

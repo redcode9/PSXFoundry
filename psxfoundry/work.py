@@ -67,3 +67,9 @@ def atomic_output(destination):
     except BaseException:
         temporary.unlink(missing_ok=True)
         raise
+
+
+def atomic_write(destination, data):
+    """Write bytes without exposing a partial destination file."""
+    with atomic_output(destination) as temporary:
+        temporary.write_bytes(data)
