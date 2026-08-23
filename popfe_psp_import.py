@@ -3,7 +3,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 
-DISC_EXTENSIONS = (".cue", ".ccd", ".chd", ".zip", ".img", ".bin")
+DISC_EXTENSIONS = (".cue", ".ccd", ".chd", ".zip", ".img", ".bin", ".iso")
 DISC_PRIORITY = {extension: index for index, extension in enumerate(DISC_EXTENSIONS)}
 ASSET_NAMES = {
     "icon0": ("ICON0.PNG",),

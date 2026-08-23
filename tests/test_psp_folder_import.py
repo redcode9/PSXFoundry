@@ -131,6 +131,15 @@ class PspFolderImportTests(unittest.TestCase):
 
             self.assertEqual([path.name for path in result.discs], ["Game.cue"])
 
+    def test_discovers_iso_images(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "Game.iso").write_bytes(b"disc")
+
+            result = scan_psp_folder(root)
+
+            self.assertEqual([path.name for path in result.discs], ["Game.iso"])
+
 
 if __name__ == "__main__":
     unittest.main()

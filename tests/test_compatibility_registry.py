@@ -22,6 +22,7 @@ from psxfoundry.registry import (
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 CRASH_BASH_SHA1 = "253c05e9e8dbe9251f31b3512fd251390483cb59"
 LOCAL_CRASH_BASH_SHA1 = "a2b83808967d77360d42c5e5d0a805bcf96f5764"
+STATIC_CRASH_BASH_BOOT = "8635e75c51dd099a2d6f22502c16e261ca4e6d350e0558ea989303c346748e6c"
 
 
 def make_rule(rule_id, match):
@@ -39,6 +40,29 @@ def make_rule(rule_id, match):
 
 
 class BundledRegistryTests(unittest.TestCase):
+    def test_recognizes_static_selector_by_boot_content(self):
+        registry = load_registry()
+        identity = DiscIdentity(
+            disc_ids=("SCES02834",),
+            boot_sha256=(STATIC_CRASH_BASH_BOOT,),
+            region="pal",
+        )
+
+        psp = registry.resolve(identity, "psp")
+        adrenaline = registry.resolve(identity, "adrenaline")
+
+        self.assertEqual(psp.id, "crash-bash-static-selector-psp")
+        self.assertEqual(psp.status, "verified")
+        self.assertEqual(psp.image_state, "prepatched")
+        self.assertEqual(psp.actions[-1].get("magic_word"), 0)
+        self.assertEqual(psp.tests[0].device, "PSP-2000 (02g)")
+        self.assertEqual(adrenaline.id, "crash-bash-static-selector-unverified")
+        self.assertEqual(adrenaline.status, "reported")
+        self.assertEqual(
+            registry.resolve(identity, "retroarch").id,
+            "crash-bash-static-selector-unverified",
+        )
+
     def test_loads_crash_bash_assets_and_exact_revision(self):
         registry = load_registry()
         identity = DiscIdentity(
@@ -94,6 +118,11 @@ class CatalogValidationTests(unittest.TestCase):
     def setUp(self):
         path = REPOSITORY_ROOT / "compatibility" / "catalog" / "psp-foundation.json"
         self.catalog = json.loads(path.read_text(encoding="utf-8"))
+        self.retail_index = next(
+            index
+            for index, rule in enumerate(self.catalog["rules"])
+            if rule["id"] == "crash-bash-sces02834-europe"
+        )
 
     def test_rejects_unknown_rule_field(self):
         data = copy.deepcopy(self.catalog)
@@ -111,7 +140,12 @@ class CatalogValidationTests(unittest.TestCase):
 
     def test_rejects_verified_rule_without_hardware_test(self):
         data = copy.deepcopy(self.catalog)
-        data["rules"][0]["status"] = "verified"
+        rule = next(
+            rule
+            for rule in data["rules"]
+            if rule["id"] == "crash-bash-static-selector-unverified"
+        )
+        rule["status"] = "verified"
 
         with self.assertRaisesRegex(RegistryError, "without a passing"):
             parse_catalog(data)
@@ -136,7 +170,7 @@ class CatalogValidationTests(unittest.TestCase):
             catalog_dir = root / "catalog"
             catalog_dir.mkdir()
             data = copy.deepcopy(self.catalog)
-            action = data["rules"][0]["actions"][0]
+            action = data["rules"][self.retail_index]["actions"][0]
             asset = root / action["path"]
             asset.parent.mkdir(parents=True)
             asset.write_bytes(b"tampered")

@@ -21,6 +21,7 @@ class ConversionPlan:
     rule_id: str | None
     rule_status: str | None
     source_match: str
+    image_state: str
     actions: tuple[CompatibilityAction, ...]
     expected_decoded_sizes: tuple[int, ...]
     warnings: tuple[str, ...]
@@ -47,6 +48,11 @@ def _identity(discs):
         sha256=tuple(disc.sha256 for disc in discs) if complete else (),
         sha1=tuple(disc.sha1 for disc in discs) if complete else (),
         md5=tuple(disc.md5 for disc in discs) if complete else (),
+        boot_sha256=(
+            tuple(disc.boot_sha256 for disc in discs)
+            if all(disc.boot_sha256 for disc in discs)
+            else ()
+        ),
         region=region,
         track_layout_sha256=layouts,
         sector_counts=sectors,
@@ -87,10 +93,13 @@ def plan_conversion(discs, target, registry):
         warnings.append(f"Compatibility rule status is {rule.status}")
 
     rule_actions = rule.actions if rule else ()
-    exact_hash = bool(
+    exact_source_hash = bool(
         rule and (rule.match.sha256 or rule.match.sha1 or rule.match.md5)
     )
-    if rule is not None and not exact_hash:
+    exact_match = bool(
+        rule and (exact_source_hash or rule.match.boot_sha256)
+    )
+    if rule is not None and not exact_source_hash:
         skipped = tuple(
             action.kind
             for action in rule_actions
@@ -126,7 +135,8 @@ def plan_conversion(discs, target, registry):
         discs=discs,
         rule_id=rule.id if rule else None,
         rule_status=rule.status if rule else None,
-        source_match="exact" if exact_hash else "game" if rule else "unknown",
+        source_match="exact" if exact_match else "game" if rule else "unknown",
+        image_state=rule.image_state if exact_match else "unknown",
         actions=actions,
         expected_decoded_sizes=expected_sizes,
         warnings=tuple(warnings),

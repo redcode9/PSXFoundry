@@ -39,6 +39,9 @@ SUMMARY_WARNINGS = {
 
 
 def _source_summary(plan):
+    states = {disc.conversion.image_state for disc in plan.discs}
+    if states == {"prepatched"}:
+        return "Known prepatched revision recognized"
     matches = {disc.conversion.source_match for disc in plan.discs}
     if matches == {"exact"}:
         return "Exact disc revision recognized"
@@ -52,7 +55,10 @@ def render_workflow_summary(plan):
     actions = []
     for disc in plan.discs:
         for action in disc.conversion.actions:
-            label = SUMMARY_ACTIONS.get(action.kind)
+            if action.kind == "set_libcrypt" and action.get("magic_word") == 0:
+                label = "no LibCrypt subchannel injection"
+            else:
+                label = SUMMARY_ACTIONS.get(action.kind)
             if label and label not in actions:
                 actions.append(label)
 
@@ -70,6 +76,8 @@ def render_workflow_summary(plan):
 
 
 def _action_line(action):
+    if action.kind == "set_libcrypt" and action.get("magic_word") == 0:
+        return "- Do not inject LibCrypt subchannel data"
     detail = next(
         (action.get(name) for name in ACTION_DETAILS if action.get(name) is not None),
         None,
@@ -100,6 +108,11 @@ def render_plan_report(plan):
         lines.append(
             f"Disc {number}: {disc_id}, {disc.format}, sha256 {disc.sha256[:12]}"
         )
+        lines.append(f"Image {number}: {plan.image_state}")
+        if disc.boot_sha256:
+            lines.append(
+                f"Boot {number}: {disc.boot_path}, sha256 {disc.boot_sha256[:12]}"
+            )
     lines.append("Actions:")
     lines.extend(_action_line(action) for action in plan.actions)
     _append_notes(lines, plan)
@@ -121,9 +134,15 @@ def render_target_workflow_report(plan):
                 f"Disc {number}: {disc.output_disc_id}, "
                 f"{description.format}, sha256 {description.sha256[:12]}",
                 f"Source match {number}: {conversion.source_match}",
+                f"Image {number}: {conversion.image_state}",
                 f"Profile {number}: {conversion.rule_id or 'lossless-default'}",
             )
         )
+        if description.boot_sha256:
+            lines.append(
+                f"Boot {number}: {description.boot_path}, "
+                f"sha256 {description.boot_sha256[:12]}"
+            )
         lines.extend(_action_line(action) for action in conversion.actions)
     _append_notes(lines, plan)
     return "\n".join(lines) + "\n"

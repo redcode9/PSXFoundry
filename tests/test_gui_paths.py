@@ -98,6 +98,8 @@ class GuiPathTests(unittest.TestCase):
         self.assertIn("sbi_files=request.sbi_files", source)
         self.assertIn("Continue with the generated fallback?", source)
         self.assertIn("The game could hang or crash", source)
+        self.assertIn("SBI: not needed", source)
+        self.assertIn("def _planned_sbi_magic", source)
 
     def test_psp_gui_uses_automatic_planning_and_validation(self):
         source = (REPOSITORY_ROOT / "pop-fe-psp.py").read_text(encoding="utf-8")

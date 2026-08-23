@@ -1,24 +1,8 @@
 #!/usr/bin/env python
-# coding: utf-8
-#
-# Takes an iso image and converts it to a CD-ROM XA mode 2 form-1 bin/cue
-# for PSX
-#
-# PSX tracks are MODE2/2352, or more sppecifically
-# CD-ROM XA mode 2 form-1
-# https://github.com/libyal/libodraw/blob/main/documentation/Optical%20disc%20RAW%20format.asciidoc
-#
-#
-# Does not Generates ErrorDetectionCode  CRC-32 by default.
-# Use --edc to generate it but beware it is super slow.
-
+"""Convert 2048-byte ISO sectors to PlayStation MODE2/2352 sectors."""
 
 import argparse
-import crc
-import os
-import re
 import struct
-import sys
 
 verbose = False
 sync = bytes([0x00, 0xff, 0xff, 0xff, 0xff, 0xff,
@@ -27,6 +11,52 @@ subheader = bytes([0x00, 0x00, 0x08, 0x00,  0x00, 0x00, 0x08, 0x00])
 
 def bcd(i):
     return int(i % 10) + 16 * (int(i / 10) % 10)
+
+
+def convert_iso_to_bin(source, destination, *, calculate_edc=False):
+    calculator = None
+    if calculate_edc:
+        import crc
+
+        config = crc.Configuration(
+            width=32,
+            polynomial=0x8001801b,
+            init_value=0x00,
+            final_xor_value=0x00,
+            reverse_input=True,
+            reverse_output=True,
+        )
+        calculator = crc.Calculator(config, optimized=True)
+
+    address = bytearray(4)
+    minute, second, frame = 0, 2, 0
+    with open(source, "rb") as input_file, open(destination, "wb") as output_file:
+        for data in iter(lambda: input_file.read(2048), b""):
+            if len(data) != 2048:
+                raise ValueError("ISO size is not a multiple of 2048")
+            output_file.write(sync)
+            struct.pack_into(
+                "<BBBB",
+                address,
+                0,
+                bcd(minute),
+                bcd(second),
+                bcd(frame),
+                2,
+            )
+            output_file.write(address)
+            output_file.write(subheader)
+            output_file.write(data)
+            checksum = calculator.checksum(subheader + data) if calculator else 0
+            output_file.write(struct.pack("<I", checksum))
+            output_file.write(bytes(276))
+            frame += 1
+            if frame == 75:
+                frame = 0
+                second += 1
+                if second == 60:
+                    second = 0
+                    minute += 1
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -37,53 +67,12 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     verbose = args.v
-    adr = bytearray(4)
-    m = 0
-    s = 2
-    f = 0
-
-    with open(args.iso, 'rb') as i:
-        with open(args.basename + '.bin', "wb") as o:
-            d = i.read(2048)
-            while d:
-                # write sync word 
-                o.write(sync)
-                # write address and mode
-                struct.pack_into('<B', adr, 0, bcd(m))
-                struct.pack_into('<B', adr, 1, bcd(s))
-                struct.pack_into('<B', adr, 2, bcd(f))
-                struct.pack_into('<B', adr, 3, 2)
-                f = f + 1
-                if f > 74:
-                    f = 0
-                    s = s + 1
-                    if s > 59:
-                        s = 0
-                        m = m + 1
-                o.write(adr)
-                # write subheader
-                o.write(subheader)
-                # write data
-                o.write(d)
-                # write error detection
-                buf = bytearray(4)
-                if args.edc:
-                    config = crc.Configuration(
-                        width=32,
-                        polynomial=0x8001801b,
-                        init_value=0x00,
-                        final_xor_value=0x00,
-                        reverse_input=True,
-                        reverse_output=True,
-                    )
-                    calculator = crc.Calculator(config, optimized=True)
-                    c = calculator.checksum(subheader + d)
-                    struct.pack_into('<I', buf, 0, c)
-                o.write(buf)
-                # write error correction
-                o.write(bytes(276))
-                d = i.read(2048)
-        print('Wrote:', args.basename + '.bin')
+    convert_iso_to_bin(
+        args.iso,
+        args.basename + ".bin",
+        calculate_edc=args.edc,
+    )
+    print('Wrote:', args.basename + '.bin')
     with open(args.basename + '.cue', "w") as o:
         o.write('FILE "' + args.basename + '.bin' + '" BINARY\n')
         o.write('  TRACK 01 MODE2/2352\n')

@@ -121,6 +121,24 @@ class BackendToolIntegrationTests(unittest.TestCase):
         self.assertIn("sbi_files=sbi_files", source)
         self.assertIn("--sbi", source)
 
+    def test_explicit_zero_disables_even_a_selected_sbi(self):
+        source = (REPOSITORY_ROOT / "pop-fe.py").read_text(encoding="utf-8")
+        function = source[
+            source.index("def prepare_target_inputs(") :
+            source.index("def write_target_report(")
+        ]
+
+        self.assertLess(
+            function.index("disc.libcrypt_magic_word == 0"),
+            function.index("elif sbi_file"),
+        )
+
+    def test_cooked_iso_conversion_keeps_a_source_warning(self):
+        source = (REPOSITORY_ROOT / "pop-fe.py").read_text(encoding="utf-8")
+
+        self.assertIn("REM PSXFOUNDRY COOKED_ISO", source)
+        self.assertIn("convert_iso_to_bin(cue_file, tmpbin)", source)
+
 
 if __name__ == "__main__":
     unittest.main()

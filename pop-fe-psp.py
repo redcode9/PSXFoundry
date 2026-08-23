@@ -66,7 +66,7 @@ verbose = False
 temp_files = []
 
 DISC_FILETYPES = [
-    ('PlayStation images', '*.cue *.ccd *.chd *.zip *.img *.bin'),
+    ('PlayStation images', '*.cue *.ccd *.chd *.zip *.img *.bin *.iso'),
     ('All files', '*'),
 ]
 
@@ -138,6 +138,7 @@ class PspApp:
         self.real_disc_ids = None
         self.sbi_selections = None
         self.sbi_errors = None
+        self.sbi_checked = None
         self.icon0 = None
         self.icon0_tk = None
         self.pic0 = None
@@ -487,6 +488,7 @@ class PspApp:
         self.real_disc_ids = []
         self.sbi_selections = []
         self.sbi_errors = []
+        self.sbi_checked = []
         self.icon0 = None
         self.icon0_tk = None
         self.pic0 = None
@@ -502,7 +504,14 @@ class PspApp:
         self.snd0_path = None
         for idx in range(1,6):
             self.builder.get_object('discid%d' % (idx), self.master).config(state='disabled')
-            self.builder.get_object('disc' + str(idx), self.master).config(filetypes=[('Image files', ['.cue', '.ccd', '.img', '.zip', '.chd']), ('All Files', ['*.*', '*'])])
+            self.builder.get_object(
+                'disc' + str(idx), self.master
+            ).config(
+                filetypes=[
+                    ('Image files', ['.cue', '.ccd', '.img', '.iso', '.zip', '.chd']),
+                    ('All Files', ['*.*', '*']),
+                ]
+            )
             self.builder.get_variable('disc%d_variable' % (idx)).set('')
             self.builder.get_variable('discid%d_variable' % (idx)).set('')
             self.builder.get_object('disc' + str(idx), self.master).config(state='disabled')
@@ -677,6 +686,16 @@ class PspApp:
         entry = libcrypt.get(disc_id)
         return entry.get('magic_word') if entry else None
 
+    def _planned_sbi_magic(self, index):
+        if (
+            self.conversion_plan is not None
+            and index < len(self.conversion_plan.discs)
+        ):
+            planned = self.conversion_plan.discs[index].libcrypt_magic_word
+            if planned is not None:
+                return planned
+        return self._expected_sbi_magic(self.real_disc_ids[index])
+
     def _sbi_summary(self):
         parts = []
         labels = {
@@ -685,13 +704,13 @@ class PspApp:
             'downloaded': 'downloaded SBI',
             'cached': 'cached SBI',
         }
-        for index, disc_id in enumerate(self.real_disc_ids or []):
+        for index, _ in enumerate(self.real_disc_ids or []):
             selection = self.sbi_selections[index]
             if selection is not None:
                 parts.append(
                     f'Disc {index + 1}: {labels[selection.origin]}'
                 )
-            elif self._expected_sbi_magic(disc_id):
+            elif self._planned_sbi_magic(index):
                 parts.append(f'Disc {index + 1}: SBI missing')
         return 'Protection data: ' + '; '.join(parts) if parts else ''
 
@@ -700,7 +719,11 @@ class PspApp:
             'sbi%d_button' % (index + 1), self.master
         )
         selection = self.sbi_selections[index]
-        if selection is not None:
+        expected = self._planned_sbi_magic(index)
+        if expected == 0:
+            text = 'SBI: not needed'
+            state = 'disabled'
+        elif selection is not None:
             labels = {
                 'local': 'SBI: local',
                 'manual': 'SBI: manual',
@@ -708,11 +731,14 @@ class PspApp:
                 'cached': 'SBI: cached',
             }
             text = labels[selection.origin]
-        elif self._expected_sbi_magic(self.real_disc_ids[index]):
+            state = 'normal'
+        elif expected:
             text = 'SBI: missing'
+            state = 'normal'
         else:
             text = 'Select SBI...'
-        button.configure(text=text)
+            state = 'normal'
+        button.configure(text=text, state=state)
 
     def _resolve_disc_sbi(self, source_path, disc_id):
         expected = self._expected_sbi_magic(disc_id)
@@ -726,6 +752,8 @@ class PspApp:
 
     def _select_sbi(self, index):
         if index >= len(self.cue_files) or self.conversion_plan is None:
+            return
+        if self._planned_sbi_magic(index) == 0:
             return
         source_path = self.real_cue_files[index]
         path = filedialog.askopenfilename(
@@ -749,6 +777,7 @@ class PspApp:
             Path(path).resolve(), 'manual', data
         )
         self.sbi_errors[index] = None
+        self.sbi_checked[index] = True
         self._update_sbi_button(index)
         self._update_plan_summary()
 
@@ -807,6 +836,23 @@ class PspApp:
             allow_missing_fixes=allow_missing_fixes,
         )
         self.conversion_plan = plan
+        for index, disc in enumerate(plan.discs):
+            if disc.libcrypt_magic_word == 0:
+                self.sbi_selections[index] = None
+                self.sbi_errors[index] = None
+                self.sbi_checked[index] = True
+            elif disc.libcrypt_magic_word and not self.sbi_checked[index]:
+                source_path = self.builder.get_variable(
+                    'disc%d_variable' % (index + 1)
+                ).get()
+                selection, error = self._resolve_disc_sbi(
+                    source_path,
+                    self.real_disc_ids[index],
+                )
+                self.sbi_selections[index] = selection
+                self.sbi_errors[index] = error
+                self.sbi_checked[index] = True
+            self._update_sbi_button(index)
         for idx, disc_id in enumerate(plan.output_disc_ids, start=1):
             self.builder.get_variable('discid%d_variable' % idx).set(disc_id)
         self._apply_plan_settings()
@@ -887,13 +933,9 @@ class PspApp:
         self.real_disc_ids.append(disc_id)
         self.cue_files.append(cue_file)
         self.real_cue_files.append(real_cue_file)
-        self.builder.get_variable('import_summary_variable').set(
-            'Checking LibCrypt protection data...'
-        )
-        self.master.update()
-        selection, sbi_error = self._resolve_disc_sbi(source_path, disc_id)
-        self.sbi_selections.append(selection)
-        self.sbi_errors.append(sbi_error)
+        self.sbi_selections.append(None)
+        self.sbi_errors.append(None)
+        self.sbi_checked.append(False)
 
         if not self.manual and disc_id in games and 'manual' in games[disc_id]:
             print('Found a manual for', disc_id) if verbose else None

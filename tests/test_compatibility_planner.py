@@ -17,6 +17,9 @@ from psxfoundry.report import render_plan_report
 
 SECTOR_SIZE = 2352
 CRASH_BASH_SHA1 = "253c05e9e8dbe9251f31b3512fd251390483cb59"
+STATIC_CRASH_BASH_SHA256 = "69e9d985b9d539c4b8eb514a0619993caf26332089d4ffe7d8187dc0f7893649"
+STATIC_CRASH_BASH_SHA1 = "a2b83808967d77360d42c5e5d0a805bcf96f5764"
+STATIC_CRASH_BASH_BOOT = "8635e75c51dd099a2d6f22502c16e261ca4e6d350e0558ea989303c346748e6c"
 
 
 class CompatibilityPlannerTests(unittest.TestCase):
@@ -35,6 +38,35 @@ class CompatibilityPlannerTests(unittest.TestCase):
             region="pal",
             sector_count=94332,
         )
+
+    def static_crash_bash_description(self):
+        return replace(
+            self.crash_bash_description(),
+            size=197342208,
+            sha256=STATIC_CRASH_BASH_SHA256,
+            sha1=STATIC_CRASH_BASH_SHA1,
+            boot_path="SCES_028.34",
+            boot_sha256=STATIC_CRASH_BASH_BOOT,
+            sector_count=83904,
+        )
+
+    def test_preserves_the_known_static_selector(self):
+        plan = plan_conversion(
+            (self.static_crash_bash_description(),),
+            "psp",
+            load_registry(),
+        )
+
+        self.assertEqual(plan.rule_id, "crash-bash-static-selector-psp")
+        self.assertEqual(plan.image_state, "prepatched")
+        self.assertEqual(plan.source_match, "exact")
+        self.assertEqual(
+            [action.kind for action in plan.actions],
+            ["preserve_disc", "set_libcrypt", "set_compression"],
+        )
+        self.assertEqual(plan.actions[1].get("magic_word"), 0)
+        self.assertEqual(plan.expected_decoded_sizes, (197342208,))
+        self.assertIn("Image 1: prepatched", render_plan_report(plan))
 
     def test_plans_exact_crash_bash_corrections(self):
         plan = plan_conversion(

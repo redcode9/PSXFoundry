@@ -60,6 +60,12 @@ identified by SHA-1 and sector count, not just by `SCES-02834`. For PSP and
 Adrenaline it applies the matching binary patch and POPS configuration. Exact
 LibCrypt records come from a validated local, cached or downloaded SBI file.
 
+The Static PAL/NTSC selector is recognized by the SHA-256 of its boot
+executable across BIN, CUE and ISO containers. Its existing protection crack is
+preserved without adding a PPF, SBI data or a POPS configuration. This profile
+passed on a PSP-2000 (02g) with 6.61 PRO-C Infinity. Profiles for the other
+targets remain `reported`.
+
 PSXFoundry does not copy a boot file from Spyro or any other game. Substituting
 copyrighted files from another title is not a safe or redistributable fix. For
 an unknown revision, PSXFoundry still validates SBI data for the serial, keeps

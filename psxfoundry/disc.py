@@ -1,6 +1,6 @@
 """Read disc inputs into stable, target-independent descriptions."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import configparser
 import hashlib
 import json
@@ -9,7 +9,7 @@ import re
 import zipfile
 
 
-SUPPORTED_SUFFIXES = {".cue", ".ccd", ".bin", ".img", ".chd", ".zip"}
+SUPPORTED_SUFFIXES = {".cue", ".ccd", ".bin", ".img", ".iso", ".chd", ".zip"}
 SERIAL_PATTERN = re.compile(
     rb"(SCES|SCUS|SCPS|SLES|SLUS|SLPS|SIPS|SLED|SCED|PBPX|PCPX|SLPM|SCZS)"
     rb"[_-]?(\d{3})[._-]?(\d{2})",
@@ -50,6 +50,8 @@ class DiscDescription:
     sha256: str
     sha1: str
     md5: str
+    boot_path: str | None
+    boot_sha256: str | None
     disc_id: str | None
     title: str | None
     region: str | None
@@ -77,6 +79,166 @@ def _sector_size(mode):
     if mode in {"MODE1/2048", "MODE2/2048"}:
         return 2048
     return 2352
+
+
+def _user_data_offset(mode):
+    if mode == "MODE1/2352":
+        return 16
+    if mode == "MODE2/2352":
+        return 24
+    if mode == "MODE2/2336":
+        return 8
+    return 0
+
+
+class _LogicalDataTrack:
+    def __init__(self, stream, mode, start_sector, sector_count):
+        self.stream = stream
+        self.sector_size = _sector_size(mode)
+        self.data_offset = _user_data_offset(mode)
+        self.start_sector = start_sector
+        self.sector_count = sector_count
+
+    def read(self, offset, size):
+        if offset < 0 or size < 0 or offset + size > self.sector_count * 2048:
+            raise DiscAnalysisError("ISO extent leaves the data track")
+        result = bytearray()
+        while size:
+            sector, within = divmod(offset, 2048)
+            length = min(size, 2048 - within)
+            physical = (
+                (self.start_sector + sector) * self.sector_size
+                + self.data_offset
+                + within
+            )
+            self.stream.seek(physical)
+            chunk = self.stream.read(length)
+            if len(chunk) != length:
+                raise DiscAnalysisError("disc image ends inside an ISO extent")
+            result.extend(chunk)
+            offset += length
+            size -= length
+        return bytes(result)
+
+    def block(self, number):
+        return self.read(number * 2048, 2048)
+
+
+def _iso_name(value):
+    return value.decode("ascii", errors="replace").split(";", 1)[0].casefold()
+
+
+def _directory_entries(track, extent, size):
+    data = track.read(extent * 2048, size)
+    position = 0
+    while position < len(data):
+        length = data[position]
+        if length == 0:
+            position = ((position // 2048) + 1) * 2048
+            continue
+        record = data[position : position + length]
+        if len(record) != length or length < 34:
+            raise DiscAnalysisError("invalid ISO 9660 directory record")
+        name_length = record[32]
+        name = record[33 : 33 + name_length]
+        if name not in {b"\x00", b"\x01"}:
+            yield (
+                _iso_name(name),
+                int.from_bytes(record[2:6], "little"),
+                int.from_bytes(record[10:14], "little"),
+                bool(record[25] & 0x02),
+            )
+        position += length
+
+
+def _iso_entry(track, root, path):
+    components = [part for part in re.split(r"[\\/]", path) if part]
+    extent, size = root
+    is_directory = True
+    for position, component in enumerate(components):
+        expected = component.split(";", 1)[0].casefold()
+        entry = next(
+            (
+                item
+                for item in _directory_entries(track, extent, size)
+                if item[0] == expected
+            ),
+            None,
+        )
+        if entry is None:
+            raise DiscAnalysisError(f"ISO 9660 file is missing: {path}")
+        _, extent, size, is_directory = entry
+        if position < len(components) - 1 and not is_directory:
+            raise DiscAnalysisError(f"ISO 9660 path is not a directory: {path}")
+    return extent, size, is_directory
+
+
+def _iso_file(track, root, path):
+    extent, size, is_directory = _iso_entry(track, root, path)
+    if is_directory:
+        raise DiscAnalysisError(f"ISO 9660 path is a directory: {path}")
+    return track.read(extent * 2048, size)
+
+
+def _boot_fingerprint(path, mode, start_sector, sector_count):
+    try:
+        with path.open("rb") as stream:
+            track = _LogicalDataTrack(stream, mode, start_sector, sector_count)
+            descriptor = track.block(16)
+            if descriptor[:7] != b"\x01CD001\x01":
+                return None, None, None
+            root_record = descriptor[156 : 156 + descriptor[156]]
+            if len(root_record) < 34:
+                return None, None, None
+            root = (
+                int.from_bytes(root_record[2:6], "little"),
+                int.from_bytes(root_record[10:14], "little"),
+            )
+            try:
+                system = _iso_file(track, root, "SYSTEM.CNF").decode(
+                    "ascii", errors="replace"
+                )
+                match = re.search(
+                    r"BOOT\s*=\s*cdrom:\s*[\\/]?([^;\r\n]+)",
+                    system,
+                    re.IGNORECASE,
+                )
+                boot_path = match.group(1).strip() if match else "PSX.EXE"
+            except DiscAnalysisError:
+                boot_path = "PSX.EXE"
+            extent, size, is_directory = _iso_entry(track, root, boot_path)
+            if is_directory:
+                return None, None, None
+            digest = hashlib.sha256()
+            offset = extent * 2048
+            while size:
+                length = min(size, 1024 * 1024)
+                digest.update(track.read(offset, length))
+                offset += length
+                size -= length
+    except (OSError, DiscAnalysisError):
+        return None, None, None
+    disc_id = _serial_from_bytes(boot_path.encode("ascii", errors="ignore"))
+    return boot_path.replace("\\", "/"), digest.hexdigest(), disc_id
+
+
+def detect_sector_mode(path):
+    """Return the sector layout identified from the ISO 9660 descriptor."""
+    path = Path(path)
+    size = path.stat().st_size
+    candidates = (
+        ("MODE2/2352", 2352, 24),
+        ("MODE1/2352", 2352, 16),
+        ("MODE2/2048", 2048, 0),
+    )
+    with path.open("rb") as stream:
+        for mode, sector_size, data_offset in candidates:
+            if size == 0 or size % sector_size:
+                continue
+            stream.seek(16 * sector_size + data_offset)
+            if stream.read(7) == b"\x01CD001\x01":
+                return mode
+    return None
 
 
 def _parse_cue_text(text):
@@ -225,9 +387,39 @@ def _finish_tracks(parsed_tracks, sizes):
     return tuple(descriptions)
 
 
-def _description(source, format_name, image_sources, streams, parsed_tracks, sizes):
+def _description(
+    source,
+    format_name,
+    image_sources,
+    streams,
+    parsed_tracks,
+    sizes,
+    source_paths=None,
+):
     size, sha256, sha1, md5, disc_id = _hash_streams(streams)
     tracks = _finish_tracks(parsed_tracks, sizes)
+    boot_path = None
+    boot_sha256 = None
+    if source_paths:
+        data_track = next(
+            (
+                (parsed, description)
+                for parsed, description in zip(parsed_tracks, tracks)
+                if parsed["mode"] != "AUDIO"
+            ),
+            None,
+        )
+        if data_track is not None:
+            parsed, description = data_track
+            image_path = source_paths.get(parsed["source"].lower())
+            if image_path is not None:
+                boot_path, boot_sha256, boot_disc_id = _boot_fingerprint(
+                    image_path,
+                    parsed["mode"],
+                    description.start_sector,
+                    description.sector_count,
+                )
+                disc_id = boot_disc_id or disc_id
     title, protections = _metadata(disc_id)
     unique_sources = []
     for name in image_sources:
@@ -243,6 +435,11 @@ def _description(source, format_name, image_sources, streams, parsed_tracks, siz
         )
         for name in unique_sources
     )
+    warnings = (
+        ("Cooked ISO input has no raw sectors or CD audio",)
+        if any(track["mode"].endswith("/2048") for track in parsed_tracks)
+        else ()
+    )
     return DiscDescription(
         source=source,
         format=format_name,
@@ -251,6 +448,8 @@ def _description(source, format_name, image_sources, streams, parsed_tracks, siz
         sha256=sha256,
         sha1=sha1,
         md5=md5,
+        boot_path=boot_path,
+        boot_sha256=boot_sha256,
         disc_id=disc_id,
         title=title,
         region=_region(disc_id),
@@ -259,7 +458,7 @@ def _description(source, format_name, image_sources, streams, parsed_tracks, siz
         track_layout_sha256=_layout(tracks),
         protections=protections,
         complete=True,
-        warnings=(),
+        warnings=warnings,
     )
 
 
@@ -294,14 +493,21 @@ def _analyze_cue(path):
     sizes = {key: image.stat().st_size for key, image in resolved.items()}
     streams = [resolved[key].open("rb") for key in resolved]
     try:
-        return _description(
+        description = _description(
             path,
             "cue",
             tuple(track["source"] for track in parsed),
             streams,
             parsed,
             sizes,
+            resolved,
         )
+        if "REM PSXFOUNDRY COOKED_ISO" in text:
+            description = replace(
+                description,
+                warnings=("Cooked ISO input has no raw sectors or CD audio",),
+            )
+        return description
     finally:
         for stream in streams:
             stream.close()
@@ -309,12 +515,18 @@ def _analyze_cue(path):
 
 def _analyze_raw(path, format_name=None):
     size = path.stat().st_size
-    if size == 0 or size % 2352:
-        raise DiscAnalysisError("raw disc image size is not a multiple of 2352")
+    mode = detect_sector_mode(path)
+    if mode is None:
+        if size and size % 2352 == 0:
+            mode = "MODE2/2352"
+        elif path.suffix.lower() == ".iso" and size and size % 2048 == 0:
+            mode = "MODE2/2048"
+        else:
+            raise DiscAnalysisError("disc image has no supported sector layout")
     parsed = [
         {
             "number": 1,
-            "mode": "MODE2/2352",
+            "mode": mode,
             "source": path.name,
             "indexes": [(1, 0)],
         }
@@ -327,6 +539,7 @@ def _analyze_raw(path, format_name=None):
             [stream],
             parsed,
             {path.name.lower(): size},
+            {path.name.lower(): path},
         )
 
 
@@ -376,6 +589,7 @@ def _analyze_ccd(path):
             [stream],
             parsed,
             {image.name.lower(): image.stat().st_size},
+            {image.name.lower(): image},
         )
 
 
@@ -388,6 +602,8 @@ def _incomplete_description(path, format_name, size, sha256, sha1, md5, warning)
         sha256=sha256,
         sha1=sha1,
         md5=md5,
+        boot_path=None,
+        boot_sha256=None,
         disc_id=None,
         title=None,
         region=None,
@@ -501,7 +717,7 @@ def analyze_disc(path):
         raise DiscAnalysisError(f"unsupported disc input: {suffix or path.name}")
     if suffix == ".cue":
         return _analyze_cue(path)
-    if suffix in {".bin", ".img"}:
+    if suffix in {".bin", ".img", ".iso"}:
         return _analyze_raw(path)
     if suffix == ".chd":
         return _analyze_chd(path)

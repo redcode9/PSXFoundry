@@ -10,6 +10,7 @@ import re
 
 SCHEMA_VERSION = 1
 STATUSES = {"verified", "reported", "experimental"}
+IMAGE_STATES = {"original", "prepatched", "modified", "unknown"}
 TARGETS = {
     "psp",
     "adrenaline",
@@ -86,6 +87,7 @@ class RuleMatch:
     sha256: tuple[str, ...] = ()
     sha1: tuple[str, ...] = ()
     md5: tuple[str, ...] = ()
+    boot_sha256: tuple[str, ...] = ()
     region: str | None = None
     track_layout_sha256: tuple[str, ...] = ()
     sector_counts: tuple[int, ...] = ()
@@ -93,7 +95,8 @@ class RuleMatch:
     @property
     def specificity(self):
         return (
-            16 * bool(self.sha256 or self.sha1 or self.md5)
+            32 * bool(self.sha256 or self.sha1 or self.md5)
+            + 24 * bool(self.boot_sha256)
             + 8 * bool(self.track_layout_sha256)
             + 4 * bool(self.sector_counts)
             + 2 * bool(self.disc_ids)
@@ -137,6 +140,7 @@ class CompatibilityRule:
     sources: tuple[RuleSource, ...]
     credits: tuple[str, ...]
     tests: tuple[HardwareTest, ...]
+    image_state: str = "unknown"
 
 
 @dataclass(frozen=True)
@@ -145,6 +149,7 @@ class DiscIdentity:
     sha256: tuple[str, ...] = ()
     sha1: tuple[str, ...] = ()
     md5: tuple[str, ...] = ()
+    boot_sha256: tuple[str, ...] = ()
     region: str | None = None
     track_layout_sha256: tuple[str, ...] = ()
     sector_counts: tuple[int, ...] = ()
@@ -154,6 +159,11 @@ class DiscIdentity:
         object.__setattr__(self, "sha256", tuple(value.lower() for value in self.sha256))
         object.__setattr__(self, "sha1", tuple(value.lower() for value in self.sha1))
         object.__setattr__(self, "md5", tuple(value.lower() for value in self.md5))
+        object.__setattr__(
+            self,
+            "boot_sha256",
+            tuple(value.lower() for value in self.boot_sha256),
+        )
         if self.region is not None:
             object.__setattr__(self, "region", self.region.lower())
         object.__setattr__(
@@ -214,6 +224,7 @@ def _match(data, context):
         "sha256",
         "sha1",
         "md5",
+        "boot_sha256",
         "region",
         "track_layout_sha256",
         "sector_counts",
@@ -231,6 +242,13 @@ def _match(data, context):
         else (),
         md5=_strings(data["md5"], f"{context}.md5", MD5_PATTERN)
         if "md5" in data
+        else (),
+        boot_sha256=_strings(
+            data["boot_sha256"],
+            f"{context}.boot_sha256",
+            SHA256_PATTERN,
+        )
+        if "boot_sha256" in data
         else (),
         region=data.get("region"),
         track_layout_sha256=_strings(
@@ -250,6 +268,7 @@ def _match(data, context):
             result.sha256,
             result.sha1,
             result.md5,
+            result.boot_sha256,
             result.track_layout_sha256,
         )
     ):
@@ -262,6 +281,7 @@ def _match(data, context):
             result.sha256,
             result.sha1,
             result.md5,
+            result.boot_sha256,
             result.track_layout_sha256,
             result.sector_counts,
         )
@@ -360,12 +380,15 @@ def _rule(data, context):
         "credits",
         "tests",
     }
-    _keys(data, required, required, context)
+    _keys(data, required, required | {"image_state"}, context)
     rule_id = _string(data["id"], f"{context}.id")
     if not RULE_ID_PATTERN.fullmatch(rule_id):
         raise RegistryError(f"{context}.id is invalid")
     if data["status"] not in STATUSES:
         raise RegistryError(f"{context}.status is invalid")
+    image_state = data.get("image_state", "unknown")
+    if image_state not in IMAGE_STATES:
+        raise RegistryError(f"{context}.image_state is invalid")
 
     targets = _strings(data["targets"], f"{context}.targets")
     if len(set(targets)) != len(targets) or any(target not in TARGETS for target in targets):
@@ -413,6 +436,7 @@ def _rule(data, context):
         sources=sources,
         credits=credits,
         tests=tests,
+        image_state=image_state,
     )
 
 
@@ -490,6 +514,7 @@ def _matches(rule_match, identity):
         (rule_match.sha256, identity.sha256),
         (rule_match.sha1, identity.sha1),
         (rule_match.md5, identity.md5),
+        (rule_match.boot_sha256, identity.boot_sha256),
         (rule_match.track_layout_sha256, identity.track_layout_sha256),
         (rule_match.sector_counts, identity.sector_counts),
     )

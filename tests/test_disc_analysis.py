@@ -6,6 +6,7 @@ from dataclasses import replace
 from pathlib import Path
 
 from cue import retarget_cue
+from iso2xa import convert_iso_to_bin
 from psxfoundry.disc import (
     DiscAnalysisError,
     analyze_disc,
@@ -22,7 +23,76 @@ def disc_bytes(sectors, serial=b"SCES_028.34"):
     return bytes(data)
 
 
+def iso_record(name, extent, size, *, directory=False):
+    encoded = name if isinstance(name, bytes) else name.encode("ascii")
+    length = 33 + len(encoded) + (len(encoded) % 2 == 0)
+    record = bytearray(length)
+    record[0] = length
+    record[2:6] = extent.to_bytes(4, "little")
+    record[6:10] = extent.to_bytes(4, "big")
+    record[10:14] = size.to_bytes(4, "little")
+    record[14:18] = size.to_bytes(4, "big")
+    record[25] = 2 if directory else 0
+    record[28:30] = (1).to_bytes(2, "little")
+    record[30:32] = (1).to_bytes(2, "big")
+    record[32] = len(encoded)
+    record[33 : 33 + len(encoded)] = encoded
+    return bytes(record)
+
+
+def playstation_iso(boot):
+    image = bytearray(32 * 2048)
+    root_record = iso_record(b"\x00", 20, 2048, directory=True)
+    descriptor = memoryview(image)[16 * 2048 : 17 * 2048]
+    descriptor[0:7] = b"\x01CD001\x01"
+    descriptor[156 : 156 + len(root_record)] = root_record
+    image[17 * 2048 : 17 * 2048 + 7] = b"\xffCD001\x01"
+
+    system = b"BOOT = cdrom:\\SCES_028.34;1\r\n"
+    records = b"".join(
+        (
+            iso_record(b"\x00", 20, 2048, directory=True),
+            iso_record(b"\x01", 20, 2048, directory=True),
+            iso_record("SYSTEM.CNF;1", 21, len(system)),
+            iso_record("SCES_028.34;1", 22, len(boot)),
+        )
+    )
+    image[20 * 2048 : 20 * 2048 + len(records)] = records
+    image[21 * 2048 : 21 * 2048 + len(system)] = system
+    image[22 * 2048 : 22 * 2048 + len(boot)] = boot
+    return bytes(image)
+
+
 class DiscAnalysisTests(unittest.TestCase):
+    def test_boot_fingerprint_is_independent_of_disc_container(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            boot = b"PS-X EXE" + bytes(2040) + b"patched selector"
+            cooked = root / "Game.iso"
+            cooked.write_bytes(playstation_iso(boot))
+            raw = root / "Game.bin"
+            convert_iso_to_bin(cooked, raw)
+            cue = root / "Game.cue"
+            cue.write_text(
+                'FILE "Game.bin" BINARY\n'
+                "  TRACK 01 MODE2/2352\n"
+                "    INDEX 01 00:00:00\n",
+                encoding="utf-8",
+            )
+
+            descriptions = tuple(analyze_disc(path) for path in (cooked, raw, cue))
+
+            self.assertEqual({disc.disc_id for disc in descriptions}, {"SCES02834"})
+            self.assertEqual({disc.boot_path for disc in descriptions}, {"SCES_028.34"})
+            self.assertEqual(
+                {disc.boot_sha256 for disc in descriptions},
+                {hashlib.sha256(boot).hexdigest()},
+            )
+            self.assertEqual(descriptions[0].tracks[0].mode, "MODE2/2048")
+            self.assertEqual(descriptions[1].tracks[0].mode, "MODE2/2352")
+            self.assertNotEqual(descriptions[0].sha256, descriptions[1].sha256)
+            self.assertIn("no raw sectors", descriptions[0].warnings[0])
+
     def test_retargets_generated_cue_to_its_local_image(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

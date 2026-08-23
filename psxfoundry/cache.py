@@ -8,7 +8,7 @@ from psxfoundry.disc import DiscDescription, TrackDescription
 from psxfoundry.work import atomic_write
 
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 
 def _canonical(data):
@@ -75,6 +75,8 @@ def _serialize(description):
         "sha256": description.sha256,
         "sha1": description.sha1,
         "md5": description.md5,
+        "boot_path": description.boot_path,
+        "boot_sha256": description.boot_sha256,
         "disc_id": description.disc_id,
         "title": description.title,
         "region": description.region,
@@ -108,6 +110,8 @@ def _deserialize(data, source):
         "sha256",
         "sha1",
         "md5",
+        "boot_path",
+        "boot_sha256",
         "disc_id",
         "title",
         "region",
@@ -139,6 +143,8 @@ def _deserialize(data, source):
         sha256=data["sha256"],
         sha1=data["sha1"],
         md5=data["md5"],
+        boot_path=data["boot_path"],
+        boot_sha256=data["boot_sha256"],
         disc_id=data["disc_id"],
         title=data["title"],
         region=data["region"],

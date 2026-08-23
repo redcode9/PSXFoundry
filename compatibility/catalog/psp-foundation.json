@@ -3,9 +3,85 @@
   "catalog": "psp-foundation",
   "rules": [
     {
+      "id": "crash-bash-static-selector-psp",
+      "title": "Crash Bash (Static PAL/NTSC selector)",
+      "status": "verified",
+      "image_state": "prepatched",
+      "match": {
+        "disc_ids": ["SCES02834"],
+        "boot_sha256": ["8635e75c51dd099a2d6f22502c16e261ca4e6d350e0558ea989303c346748e6c"],
+        "region": "pal"
+      },
+      "targets": ["psp"],
+      "actions": [
+        {
+          "type": "preserve_disc"
+        },
+        {
+          "type": "set_libcrypt",
+          "magic_word": 0
+        }
+      ],
+      "sources": [
+        {
+          "name": "Demozoo",
+          "url": "https://demozoo.org/productions/169944/",
+          "note": "Static PAL/NTSC selector and protection crack"
+        }
+      ],
+      "credits": ["Static", "Mr. Batman"],
+      "tests": [
+        {
+          "target": "psp",
+          "device": "PSP-2000 (02g)",
+          "firmware": "6.61 PRO-C Infinity",
+          "result": "pass",
+          "date": "2026-08-24"
+        }
+      ]
+    },
+    {
+      "id": "crash-bash-static-selector-unverified",
+      "title": "Crash Bash (Static PAL/NTSC selector)",
+      "status": "reported",
+      "image_state": "prepatched",
+      "match": {
+        "disc_ids": ["SCES02834"],
+        "boot_sha256": ["8635e75c51dd099a2d6f22502c16e261ca4e6d350e0558ea989303c346748e6c"],
+        "region": "pal"
+      },
+      "targets": [
+        "adrenaline",
+        "ps2",
+        "ps3",
+        "psio",
+        "retroarch",
+        "playstation-classic"
+      ],
+      "actions": [
+        {
+          "type": "preserve_disc"
+        },
+        {
+          "type": "set_libcrypt",
+          "magic_word": 0
+        }
+      ],
+      "sources": [
+        {
+          "name": "Demozoo",
+          "url": "https://demozoo.org/productions/169944/",
+          "note": "Static PAL/NTSC selector and protection crack"
+        }
+      ],
+      "credits": ["Static", "Mr. Batman"],
+      "tests": []
+    },
+    {
       "id": "crash-bash-sces02834-europe",
       "title": "Crash Bash",
       "status": "reported",
+      "image_state": "original",
       "match": {
         "disc_ids": ["SCES02834"],
         "sha1": ["253c05e9e8dbe9251f31b3512fd251390483cb59"],

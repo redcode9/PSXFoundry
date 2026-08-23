@@ -86,6 +86,47 @@ class PspConversionPlanTests(unittest.TestCase):
             self.assertTrue(plan.use_cdda)
             self.assertEqual(plan.expected_decoded_sizes, (SECTOR_SIZE * 16,) * 2)
 
+    def test_prepatched_profile_disables_libcrypt_injection(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            disc = self.make_disc(root, "disc.bin", 0x12)
+            digest = hashlib.sha256(disc.read_bytes()).hexdigest()
+            prepatched = CompatibilityRule(
+                id="known-prepatched-image",
+                title="Test game",
+                status="reported",
+                match=RuleMatch(
+                    disc_ids=("SCUS00001",),
+                    sha256=(digest,),
+                ),
+                targets=("psp",),
+                actions=(
+                    CompatibilityAction("set_libcrypt", (("magic_word", 0),)),
+                ),
+                sources=(RuleSource("Test", "https://example.com"),),
+                credits=("Test",),
+                tests=(),
+                image_state="prepatched",
+            )
+
+            plan = build_psp_plan(
+                (disc,),
+                fallback_disc_ids=("SCUS00001",),
+                registry=CompatibilityRegistry((prepatched,)),
+                resource_root=root,
+            )
+
+            self.assertEqual(plan.discs[0].libcrypt_magic_word, 0)
+            self.assertIn("Known prepatched revision", render_workflow_summary(plan))
+            self.assertIn(
+                "no LibCrypt subchannel injection",
+                render_workflow_summary(plan),
+            )
+            self.assertIn(
+                "Do not inject LibCrypt subchannel data",
+                render_target_workflow_report(plan),
+            )
+
     def test_resolves_config_and_output_id_from_actions(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

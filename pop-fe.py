@@ -77,8 +77,10 @@ try:
 except:
     True
 from cue import parse_ccd, parse_cue, ccd2cue, retarget_cue, write_cue
+from iso2xa import convert_iso_to_bin
 from popstation import popstation, GenerateSFO
 from psxfoundry.cache import AnalysisCache
+from psxfoundry.disc import detect_sector_mode
 from psxfoundry.psp import lead_out_msf, track_end_offset, whole_disc_modes
 from psxfoundry.psp_workflow import (
     build_target_plan,
@@ -4482,6 +4484,8 @@ def prepare_target_inputs(
     for disc, value, sbi_file in zip(plan.discs, magic_word, sbi_files):
         if not include_libcrypt:
             subchannels.append(None)
+        elif disc.libcrypt_magic_word == 0:
+            subchannels.append(None)
         elif sbi_file:
             subchannels.append(
                 load_sbi(
@@ -4639,6 +4643,28 @@ def generate_aea_files(cue_files, img_files, subdir):
 
 def process_disk_file(cue_file, idx, temp_files, subdir='./'):
     real_cue_file = cue_file
+
+    if cue_file[-4:].lower() == '.iso':
+        tmpcue = subdir + 'TMP%d.cue' % idx
+        tmpbin = subdir + 'TMP%d.bin' % idx
+        mode = detect_sector_mode(cue_file)
+        if mode is None:
+            raise ValueError('ISO has no supported PlayStation sector layout')
+        cooked_iso = mode.endswith('/2048')
+        if cooked_iso:
+            convert_iso_to_bin(cue_file, tmpbin)
+            mode = 'MODE2/2352'
+        else:
+            copy_file(cue_file, tmpbin)
+        with open(tmpcue, 'w') as output:
+            if cooked_iso:
+                output.write('REM PSXFOUNDRY COOKED_ISO\n')
+            output.write('FILE "%s" BINARY\n' % os.path.basename(tmpbin))
+            output.write('  TRACK 01 %s\n' % mode)
+            output.write('    INDEX 01 00:00:00\n')
+        temp_files.extend((tmpcue, tmpbin))
+        cue_file = tmpcue
+        real_cue_file = tmpcue
 
     if cue_file[-4:].lower() == '.chd':
         print('This is a CHD file. Uncompress the file.') if verbose else None
