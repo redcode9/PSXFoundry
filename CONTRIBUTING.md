@@ -46,9 +46,10 @@ revisions:
 ```sh
 git submodule update --init --recursive
 packaging/macos/build-helpers.sh
-PSXFOUNDRY_VERSION=0.1.0 packaging/macos/build-apps.sh
-PSXFOUNDRY_VERSION=0.1.0 packaging/macos/create-dmg.sh
-packaging/macos/smoke-dmg.sh build/macos/PSXFoundry-0.1.0-macOS-arm64.dmg
+release_version=1.2.3
+PSXFOUNDRY_VERSION="$release_version" packaging/macos/build-apps.sh
+PSXFOUNDRY_VERSION="$release_version" packaging/macos/create-dmg.sh
+packaging/macos/smoke-dmg.sh "build/macos/PSXFoundry-$release_version-macOS-arm64.dmg"
 ```
 
 Every packaged Mach-O must be ARM64, target macOS 14 or older, and contain no
