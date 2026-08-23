@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import sys
 import tkinter as tk
+import tkinter.ttk as ttk
 import traceback
 from typing import Type
 
@@ -17,6 +18,37 @@ class FinishedDialog(tk.Toplevel):
             fill="both", expand=True, padx=20, pady=20
         )
         tk.Button(self, text="Continue", command=self.destroy).pack(side="bottom")
+
+
+class ConversionDialog(tk.Toplevel):
+    def __init__(self, root, message="Preparing conversion..."):
+        super().__init__(root)
+        self.title("Creating EBOOT.PBP")
+        self.resizable(False, False)
+        self.transient(root)
+        self.protocol("WM_DELETE_WINDOW", lambda: None)
+
+        self.status = tk.StringVar(self, value=message)
+        ttk.Label(self, textvariable=self.status, anchor="center").pack(
+            fill="x", padx=24, pady=(20, 12)
+        )
+        self.progress = ttk.Progressbar(
+            self,
+            mode="indeterminate",
+            length=320,
+        )
+        self.progress.pack(fill="x", padx=24, pady=(0, 20))
+        self.progress.start(12)
+        self.grab_set()
+
+    def set_phase(self, message):
+        self.status.set(message)
+
+    def close(self):
+        self.progress.stop()
+        if self.grab_current() == self:
+            self.grab_release()
+        self.destroy()
 
 
 def write_exception_log(

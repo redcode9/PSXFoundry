@@ -1,22 +1,27 @@
 #!/usr/bin/env python
 
 import argparse
+from dataclasses import dataclass
 import os
 import pygubu
 import pygubu.widgets.simpletooltip as tooltip
+import queue
 import re
 import shutil
 import struct
 import subprocess
+import threading
 import tkinter as tk
 import tkinter.ttk as ttk
 import zipfile
 from pathlib import Path
 from tkinter import filedialog, messagebox
 from popfe_gui import (
+    ConversionDialog,
     FinishedDialog,
     confirm_conversion_without_fix,
     install_tk_error_handler,
+    write_exception_log,
 )
 from popfe_psp_import import FolderImportError, scan_psp_folder
 from popfe_runtime import runtime as popfe_runtime
@@ -67,6 +72,33 @@ TARGET_VALUES = {
 }
 
 
+@dataclass(frozen=True)
+class PspConversionRequest:
+    plan: object
+    output_dir: str
+    title: str
+    disc_ids: tuple[str, ...]
+    real_disc_ids: tuple[str, ...]
+    cue_files: tuple[str, ...]
+    real_cue_files: tuple[str, ...]
+    image_files: tuple[str, ...]
+    work_dir: str
+    snd0: str
+    manual: str
+    logo_path: str
+    icon0: object
+    pic0: object
+    pic1: object
+    disable_pic0: bool
+    disable_pic1: bool
+    disable_title_image: bool
+    watermark: bool
+    use_pic1_as_logo: bool
+    undither: bool
+    force_ntsc: bool
+    use_cdda: bool
+
+
 class PspApp:
     def __init__(self, master=None):
         self.myrect = None
@@ -105,6 +137,8 @@ class PspApp:
         self.snd0_path = None
         self.path_dir = None
         self.conversion_plan = None
+        self.conversion_dialog = None
+        self.conversion_events = None
         self.advanced_visible = False
         self.analysis_cache = AnalysisCache(
             popfe_runtime.cache_dir / 'psxfoundry' / 'analysis'
@@ -963,174 +997,292 @@ class PspApp:
            
         self.master.config(cursor='')
 
-    def on_create_eboot(self):
-        if not self.cue_files:
-            return
+    def _build_conversion_request(self, plan):
+        output_dir = self.builder.get_variable('pkgdir_variable').get()
+        if not output_dir:
+            output_dir = str(popfe_runtime.home) if popfe_runtime.is_macos else '.'
 
-        self.master.config(cursor='watch')
-        self.master.update()
-        try:
-            plan = self.conversion_plan or self._refresh_conversion_plan_with_prompt()
-            if plan is None:
-                return
-            pkgdir = self.builder.get_variable('pkgdir_variable').get()
-            title = self.builder.get_variable('title_variable').get()
-            disc_ids = tuple(
-                self.builder.get_variable('discid%d_variable' % (idx + 1)).get()
+        return PspConversionRequest(
+            plan=plan,
+            output_dir=output_dir,
+            title=self.builder.get_variable('title_variable').get(),
+            disc_ids=tuple(
+                self.builder.get_variable(
+                    'discid%d_variable' % (idx + 1)
+                ).get()
                 for idx in range(len(self.cue_files))
-            )
-            print('Creating EBOOT')
-            print('DISC', disc_ids[0])
-            print('TITLE', title)
-
-            snd0 = self.builder.get_variable('snd0_variable').get()
-            if snd0[:24] == 'https://www.youtube.com/':
-                snd0 = popfe.get_snd0_from_link(snd0, subdir=self.subdir)
-                if snd0:
-                    temp_files.append(snd0)
-
-            manual = self.builder.get_variable('manual_variable').get()
-            if manual and manual != 'None':
-                manual = popfe.create_manual(
-                    manual, self.disc_ids[0], subdir=self.subdir
-                )
-            else:
-                manual = None
-
-            if pkgdir:
-                ebootdir = pkgdir
-            elif popfe_runtime.is_macos:
-                ebootdir = str(popfe_runtime.home)
-            else:
-                ebootdir = '.'
-
-            undither = (
+            ),
+            real_disc_ids=tuple(self.real_disc_ids),
+            cue_files=tuple(self.cue_files),
+            real_cue_files=tuple(self.real_cue_files),
+            image_files=tuple(self.img_files),
+            work_dir=self.subdir,
+            snd0=self.builder.get_variable('snd0_variable').get(),
+            manual=self.builder.get_variable('manual_variable').get(),
+            logo_path=self.builder.get_variable('logo_variable').get(),
+            icon0=self.icon0.copy() if self.icon0 else None,
+            pic0=self.pic0.copy() if self.pic0 else None,
+            pic1=self.pic1.copy() if self.pic1 else None,
+            disable_pic0=self.pic0_disabled == 'on',
+            disable_pic1=self.pic1_disabled == 'on',
+            disable_title_image=self.nopstitleimg == 'on',
+            watermark=self.watermark == 'on',
+            use_pic1_as_logo=self.pic1aslogo == 'on',
+            undither=(
                 self.builder.get_variable('psx_undither_variable').get() == 'on'
-            )
-            ntsc = self.builder.get_variable('force_ntsc_variable').get() == 'on'
-            cdda = self.builder.get_variable('cdda_variable').get() == 'on'
-            working_cues, working_images, _, subchannels = (
-                popfe.prepare_target_inputs(
-                    plan,
-                    self.cue_files,
-                    self.img_files,
-                    self.real_disc_ids,
-                    self.subdir,
-                    undither=undither,
-                )
-            )
+            ),
+            force_ntsc=(
+                self.builder.get_variable('force_ntsc_variable').get() == 'on'
+            ),
+            use_cdda=self.builder.get_variable('cdda_variable').get() == 'on',
+        )
 
-            aea_files, _ = popfe.generate_aea_files(
-                working_cues, working_images, self.subdir
-            )
-            planned_configs = read_planned_configs(
-                plan, force_ntsc=False, cdda=False
-            )
-            expected_configs = read_planned_configs(
-                plan, force_ntsc=ntsc, cdda=cdda
-            )
-            expected_sizes = execution_decoded_sizes(
-                plan, use_cdda=cdda
-            )
-            expected_hashes = expected_decoded_hashes(
-                plan, working_images, use_cdda=cdda
-            )
-            expected_tocs = tuple(
-                bytes(popfe.get_toc_from_cue(cue)).ljust(1020, b'\x00')
-                for cue in working_cues
-            )
+    def _create_eboot(self, request, set_phase):
+        print('Creating EBOOT')
+        print('DISC', request.disc_ids[0])
+        print('TITLE', request.title)
 
-            logo = None
-            logo_path = self.builder.get_variable('logo_variable').get()
-            if logo_path:
-                logo = Image.open(logo_path)
+        set_phase('Preparing assets...')
+        snd0 = request.snd0
+        if snd0[:24] == 'https://www.youtube.com/':
+            snd0 = popfe.get_snd0_from_link(snd0, subdir=request.work_dir)
+            if snd0:
+                temp_files.append(snd0)
 
-            output_path = popfe.create_psp(
-                ebootdir,
-                disc_ids,
-                self.real_disc_ids,
-                title,
-                self.icon0,
-                self.pic0 if self.pic0_disabled == 'off' else None,
-                self.pic1 if self.pic1_disabled == 'off' else None,
+        manual = request.manual
+        if manual and manual != 'None':
+            manual = popfe.create_manual(
+                manual,
+                request.real_disc_ids[0],
+                subdir=request.work_dir,
+            )
+        else:
+            manual = None
+
+        set_phase('Applying compatibility fixes...')
+        working_cues, working_images, _, subchannels = (
+            popfe.prepare_target_inputs(
+                request.plan,
+                request.cue_files,
+                request.image_files,
+                request.real_disc_ids,
+                request.work_dir,
+                undither=request.undither,
+            )
+        )
+
+        set_phase('Processing audio...')
+        aea_files, _ = popfe.generate_aea_files(
+            working_cues,
+            working_images,
+            request.work_dir,
+        )
+        planned_configs = read_planned_configs(
+            request.plan,
+            force_ntsc=False,
+            cdda=False,
+        )
+        expected_configs = read_planned_configs(
+            request.plan,
+            force_ntsc=request.force_ntsc,
+            cdda=request.use_cdda,
+        )
+        expected_sizes = execution_decoded_sizes(
+            request.plan,
+            use_cdda=request.use_cdda,
+        )
+        expected_hashes = expected_decoded_hashes(
+            request.plan,
+            working_images,
+            use_cdda=request.use_cdda,
+        )
+        expected_tocs = tuple(
+            bytes(popfe.get_toc_from_cue(cue)).ljust(1020, b'\x00')
+            for cue in working_cues
+        )
+
+        logo = Image.open(request.logo_path) if request.logo_path else None
+        if request.use_pic1_as_logo:
+            logo = request.pic1
+
+        set_phase('Creating EBOOT.PBP...')
+        output_path = Path(
+            popfe.create_psp(
+                request.output_dir,
+                request.disc_ids,
+                request.real_disc_ids,
+                request.title,
+                request.icon0,
+                None if request.disable_pic0 else request.pic0,
+                None if request.disable_pic1 else request.pic1,
                 working_cues,
-                self.real_cue_files,
+                request.real_cue_files,
                 working_images,
                 [],
                 aea_files,
-                subdir=self.subdir,
+                subdir=request.work_dir,
                 snd0=snd0,
-                no_pstitleimg=self.nopstitleimg == 'on',
-                watermark=self.watermark == 'on',
+                no_pstitleimg=request.disable_title_image,
+                watermark=request.watermark,
                 subchannels=subchannels,
                 manual=manual,
-                use_cdda=cdda,
-                logo=self.pic1 if self.pic1aslogo == 'on' else logo,
+                use_cdda=request.use_cdda,
+                logo=logo,
                 no_libcrypt=True,
                 psx_undither=False,
-                force_ntsc=ntsc,
-                cdda=cdda,
+                force_ntsc=request.force_ntsc,
+                cdda=request.use_cdda,
                 planned_configs=planned_configs,
-                compression_level=plan.compression_level,
+                compression_level=request.plan.compression_level,
             )
+        )
 
-            output_path = Path(output_path)
-            report_path = output_path.with_name('PSXFoundry-report.txt')
-            validation = validate_generated_eboot(
-                output_path,
-                EbootExpectation(
-                    disc_ids=disc_ids,
-                    decoded_sizes=expected_sizes,
-                    decoded_sha256=expected_hashes,
-                    tocs=expected_tocs,
-                    configs=expected_configs,
-                    subchannel_records=tuple(
-                        len(data) // 12 if data is not None else 0
-                        for data in subchannels
-                    ),
+        set_phase('Validating EBOOT.PBP...')
+        report_path = output_path.with_name('PSXFoundry-report.txt')
+        validation = validate_generated_eboot(
+            output_path,
+            EbootExpectation(
+                disc_ids=request.disc_ids,
+                decoded_sizes=expected_sizes,
+                decoded_sha256=expected_hashes,
+                tocs=expected_tocs,
+                configs=expected_configs,
+                subchannel_records=tuple(
+                    len(data) // 12 if data is not None else 0
+                    for data in subchannels
                 ),
-                report_path=report_path,
+            ),
+            report_path=report_path,
+        )
+        report = render_target_workflow_report(request.plan)
+        override_lines = []
+        if request.disc_ids != request.plan.output_disc_ids:
+            override_lines.append('- Disc IDs: ' + ', '.join(request.disc_ids))
+        if request.use_cdda != request.plan.use_cdda:
+            override_lines.append(
+                f'- CD audio: {"raw" if request.use_cdda else "ATRAC3"}'
             )
-            report = render_target_workflow_report(plan)
-            override_lines = []
-            if disc_ids != plan.output_disc_ids:
-                override_lines.append('- Disc IDs: ' + ', '.join(disc_ids))
-            if cdda != plan.use_cdda:
-                override_lines.append(
-                    f'- CD audio: {"raw" if cdda else "ATRAC3"}'
-                )
-            if ntsc != plan.force_ntsc:
-                override_lines.append(
-                    f'- Force NTSC: {"yes" if ntsc else "no"}'
-                )
-            if undither != plan.undither:
-                override_lines.append(
-                    f'- Undither: {"yes" if undither else "no"}'
-                )
-            if self.nopstitleimg == 'on':
-                override_lines.append('- PSTITLEIMG: disabled')
-            overrides = 'Overrides:\n' + '\n'.join(
-                override_lines or ['- None']
-            ) + '\n'
-            report_path.write_text(
-                report + overrides + validation.to_text(),
-                encoding='utf-8',
+        if request.force_ntsc != request.plan.force_ntsc:
+            override_lines.append(
+                f'- Force NTSC: {"yes" if request.force_ntsc else "no"}'
             )
-            if not validation.ok:
-                raise RuntimeError(
-                    'EBOOT validation failed. See ' + str(report_path)
-                )
-        except Exception as error:
-            messagebox.showerror(
-                'Could not create EBOOT', str(error), parent=self.master
+        if request.undither != request.plan.undither:
+            override_lines.append(
+                f'- Undither: {"yes" if request.undither else "no"}'
             )
-            return
-        finally:
-            self.master.config(cursor='')
+        if request.disable_title_image:
+            override_lines.append('- PSTITLEIMG: disabled')
+        overrides = 'Overrides:\n' + '\n'.join(
+            override_lines or ['- None']
+        ) + '\n'
+        report_path.write_text(
+            report + overrides + validation.to_text(),
+            encoding='utf-8',
+        )
+        if not validation.ok:
+            raise RuntimeError(
+                'EBOOT validation failed. See ' + str(report_path)
+            )
+        return output_path
 
-        d = FinishedDialog(self.master, "Finished creating EBOOT")
-        self.master.wait_window(d)
-        self.init_data()
+    def _run_conversion(self, request):
+        def set_phase(message):
+            self.conversion_events.put(('phase', message))
+
+        try:
+            output_path = self._create_eboot(request, set_phase)
+        except Exception as error:
+            try:
+                log_path = write_exception_log(
+                    popfe_runtime,
+                    'psp',
+                    type(error),
+                    error,
+                    error.__traceback__,
+                )
+            except Exception:
+                log_path = None
+            self.conversion_events.put(('error', error, log_path))
+            return
+        self.conversion_events.put(('complete', output_path))
+
+    def _close_conversion_dialog(self):
+        if self.conversion_dialog is not None:
+            self.conversion_dialog.close()
+        self.conversion_dialog = None
+        self.conversion_events = None
+
+    def _show_conversion_error(self, error, log_path=None):
+        if log_path is None:
+            try:
+                log_path = write_exception_log(
+                    popfe_runtime,
+                    'psp',
+                    type(error),
+                    error,
+                    error.__traceback__,
+                )
+            except Exception:
+                pass
+
+        message = str(error)
+        if log_path is not None:
+            message += '\n\nDiagnostic log: ' + str(log_path)
+        messagebox.showerror(
+            'Could not create EBOOT',
+            message,
+            parent=self.master,
+        )
+
+    def _poll_conversion(self):
+        while True:
+            try:
+                event = self.conversion_events.get_nowait()
+            except queue.Empty:
+                self.master.after(100, self._poll_conversion)
+                return
+
+            if event[0] == 'phase':
+                self.conversion_dialog.set_phase(event[1])
+                continue
+
+            self._close_conversion_dialog()
+            if event[0] == 'error':
+                self._show_conversion_error(event[1], event[2])
+                return
+
+            dialog = FinishedDialog(
+                self.master,
+                'Finished creating EBOOT\n' + str(event[1]),
+            )
+            self.master.wait_window(dialog)
+            self.init_data()
+            return
+
+    def on_create_eboot(self):
+        if not self.cue_files or self.conversion_dialog is not None:
+            return
+
+        try:
+            plan = (
+                self.conversion_plan
+                or self._refresh_conversion_plan_with_prompt()
+            )
+            if plan is None:
+                return
+            request = self._build_conversion_request(plan)
+        except Exception as error:
+            self._show_conversion_error(error)
+            return
+
+        self.conversion_events = queue.Queue()
+        self.conversion_dialog = ConversionDialog(self.master)
+        threading.Thread(
+            target=self._run_conversion,
+            args=(request,),
+            daemon=True,
+        ).start()
+        self.master.after(50, self._poll_conversion)
 
     def on_reset(self):
         self.init_data()

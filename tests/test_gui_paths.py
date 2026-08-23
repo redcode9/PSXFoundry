@@ -104,6 +104,18 @@ class GuiPathTests(unittest.TestCase):
         self.assertIn("class Ps3App:", ps3_source)
         self.assertNotIn("class FinishedDialog", psp_source + ps3_source)
 
+    def test_psp_conversion_runs_behind_a_modal_progress_dialog(self):
+        source = (REPOSITORY_ROOT / "pop-fe-psp.py").read_text(encoding="utf-8")
+        dialogs = (REPOSITORY_ROOT / "popfe_gui.py").read_text(encoding="utf-8")
+
+        self.assertIn("threading.Thread(", source)
+        self.assertIn("ConversionDialog(self.master)", source)
+        self.assertIn("self.master.after(50, self._poll_conversion)", source)
+        self.assertIn("set_phase('Creating EBOOT.PBP...')", source)
+        self.assertIn("set_phase('Validating EBOOT.PBP...')", source)
+        self.assertIn('self.protocol("WM_DELETE_WINDOW", lambda: None)', dialogs)
+        self.assertIn("self.grab_set()", dialogs)
+
     def test_psp_gui_keeps_compatibility_overrides_collapsed(self):
         ui = ET.parse(REPOSITORY_ROOT / "pop-fe-psp.ui")
         object_ids = {
