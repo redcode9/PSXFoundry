@@ -17,6 +17,25 @@ Generated PBP files are checked for their structure, offsets, disc table,
 embedded configuration and payload bounds. This detects packaging errors; it
 does not replace testing on real hardware.
 
+## Modified disc images
+
+Disc detection uses logical data sectors, the ISO 9660 file tree and the boot
+executable. Its result does not depend on a `.bin`, `.cue` or `.iso` filename.
+Track layout remains separate because a cooked ISO cannot retain raw sectors or
+CD audio.
+
+An exact catalog match can identify an original or prepatched revision and
+select its complete target profile. A known prepatched revision is preserved
+without adding corrections that its patch replaces. A confirmed but unknown
+modification receives no revision-sensitive binary patch; validated LibCrypt
+data remains enabled unless an exact signature confirms a protection bypass.
+If the available evidence cannot establish a modification, the lossless
+default is used instead of guessing.
+
+Detection records the content hash, boot path, boot executable hash and matched
+signatures. Only exact evidence changes compatibility settings. Heuristic
+findings are reported but do not disable required protection data.
+
 ## Target notes
 
 - **PSP:** standard Sony POPS output. Device firmware and model can affect a
