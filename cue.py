@@ -8,11 +8,44 @@ import argparse
 import io
 import glob
 import os
+from pathlib import Path
+import re
 import struct
 
 verbose = False
 
 SECTLEN = 2352
+
+FILE_DIRECTIVE = re.compile(
+    r'^(?P<prefix>[ \t]*FILE[ \t]+)(?:"[^"\r\n]*"|[^ \t\r\n]+)'
+    r'(?P<suffix>[ \t]+[^ \t\r\n]+[ \t]*)(?P<newline>\r?\n|$)',
+    re.IGNORECASE,
+)
+
+
+def retarget_cue(source, destination, image_name):
+    """Write a CUE whose FILE directives point to one local image."""
+    if Path(image_name).name != image_name or '"' in image_name:
+        raise ValueError('CUE image name must be a filename')
+
+    lines = []
+    replacements = 0
+    with open(source, 'r') as cue_file:
+        for line in cue_file:
+            match = FILE_DIRECTIVE.match(line)
+            if match is None:
+                lines.append(line)
+                continue
+            lines.append(
+                f'{match.group("prefix")}"{image_name}"'
+                f'{match.group("suffix")}{match.group("newline")}'
+            )
+            replacements += 1
+
+    if replacements == 0:
+        raise ValueError('CUE contains no FILE directive')
+    with open(destination, 'w') as cue_file:
+        cue_file.writelines(lines)
 
 def fixup_cue(cue, raw=False, psxtruncate=False):
     file = None

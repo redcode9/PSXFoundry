@@ -75,7 +75,7 @@ try:
     from make_isoedat import pack
 except:
     True
-from cue import parse_ccd, parse_cue, ccd2cue, write_cue
+from cue import parse_ccd, parse_cue, ccd2cue, retarget_cue, write_cue
 from popstation import popstation, GenerateSFO
 from psxfoundry.cache import AnalysisCache
 from psxfoundry.psp import lead_out_msf, track_end_offset, whole_disc_modes
@@ -4343,12 +4343,8 @@ def apply_ppf_fixes(real_disc_ids, cue_files, img_files, md5_sums, subdir, tag=N
         print('Copy %s -> %s so we can apply PPF' % (img_files[i], _b))
         copy_file(img_files[i], _b) 
         temp_files.append(_b)
-        with open(cue_files[i], 'r') as fi:
-            l = fi.readlines()
-            l[0] = 'FILE "%s" BINARY\n' % ('PPF%02x.bin' % i)
-            with open(_c, 'w') as fo:
-                fo.writelines(l)
-                temp_files.append(_c)
+        retarget_cue(cue_files[i], _c, os.path.basename(_b))
+        temp_files.append(_c)
         cue_files[i] = _c
         img_files[i] = _b
 
@@ -4379,13 +4375,11 @@ def isolate_target_inputs(cue_files, img_files, patches_by_disc, target_dir):
         patched_image = target_dir + 'DISC%02x.bin' % idx
         copy_file(img_files[idx], patched_image)
         temp_files.append(patched_image)
-        with open(cue_files[idx], 'r') as source:
-            lines = source.readlines()
-        if not lines:
-            raise ValueError('cannot patch an empty CUE file')
-        lines[0] = 'FILE "%s" BINARY\n' % os.path.basename(patched_image)
-        with open(patched_cue, 'w') as output:
-            output.writelines(lines)
+        retarget_cue(
+            cue_files[idx],
+            patched_cue,
+            os.path.basename(patched_image),
+        )
         temp_files.append(patched_cue)
         cue_files[idx] = patched_cue
         img_files[idx] = patched_image
@@ -4489,12 +4483,8 @@ def apply_romhacks(real_disc_ids, cue_files, img_files, romhacks, subdir):
             print('Copy %s -> %s so we can apply ROMHACK' % (img_files[i], _b))
             copy_file(img_files[i], _b) 
             temp_files.append(_b)
-            with open(cue_files[i], 'r') as fi:
-                l = fi.readlines()
-                l[0] = 'FILE "%s" BINARY\n' % ('PATCH%02x.bin' % i)
-                with open(_c, 'w') as fo:
-                    fo.writelines(l)
-                    temp_files.append(_c)
+            retarget_cue(cue_files[i], _c, os.path.basename(_b))
+            temp_files.append(_c)
             cue_files[i] = _c
             img_files[i] = _b
 
@@ -4635,10 +4625,13 @@ def process_disk_file(cue_file, idx, temp_files, subdir='./'):
 
     if cue_file[-3:].lower() == 'img' or cue_file[-3:].lower() == 'bin':
         tmpcue = subdir + 'TMP%d.cue' % (idx)
+        tmpbin = subdir + 'TMP%d.bin' % (idx)
         print('IMG or BIN file. Create a temporary cue file for it', tmpcue) if verbose else None
         temp_files.append(tmpcue)
+        temp_files.append(tmpbin)
+        copy_file(cue_file, tmpbin)
         with open(tmpcue, "w") as f:
-            f.write('FILE "%s" BINARY\n' % os.path.abspath(cue_file))
+            f.write('FILE "%s" BINARY\n' % os.path.basename(tmpbin))
             f.write('  TRACK 01 MODE2/2352\n')
             f.write('    INDEX 01 00:00:00\n')
 
@@ -4654,6 +4647,10 @@ def process_disk_file(cue_file, idx, temp_files, subdir='./'):
         ccd = parse_ccd(cue_file)
         cue = ccd2cue(ccd)
         write_cue(cue, tmpcue)
+        tmpbin = subdir + 'TMP%d.bin' % (idx)
+        copy_file(ccd['FILE'], tmpbin)
+        temp_files.append(tmpbin)
+        retarget_cue(tmpcue, tmpcue, os.path.basename(tmpbin))
 
         cue_file = tmpcue
 
@@ -4707,12 +4704,12 @@ def patch_libcrypt(real_disc_ids, cue_files, img_files, subdir='pop-fe-work/'):
             print('Copy %s to LCP%02x.bin so we can patch libcrypt' % (i[0], idx)) #if verbose else None
             copy_file(i[0], subdir + 'LCP%02x.bin' % idx) 
             temp_files.append('LCP%02x.bin' % idx)
-            with open(cue_files[idx], 'r') as fi:
-                l = fi.readlines()
-                l[0] = 'FILE "%s" BINARY\n' % ('LCP%02x.bin' % idx)
-                with open(subdir + 'LCP%02x.cue' % idx, 'w') as fo:
-                    fo.writelines(l)
-                temp_files.append('LCP%02x.cue' % idx)
+            retarget_cue(
+                cue_files[idx],
+                subdir + 'LCP%02x.cue' % idx,
+                'LCP%02x.bin' % idx,
+            )
+            temp_files.append('LCP%02x.cue' % idx)
             cue_files[idx] = subdir + 'LCP%02x.cue' % idx
             img_files[idx] = subdir + 'LCP%02x.bin' % idx
         subprocess.run(
@@ -4730,12 +4727,12 @@ def patch_undither(real_disc_ids, cue_files, img_files, subdir='pop-fe-work/'):
             print('Copy %s to UD%02x.bin so we can patch libcrypt' % (i[0], idx)) #if verbose else None
             copy_file(i[0], subdir + 'UD%02x.bin' % idx) 
             temp_files.append('UD%02x.bin' % idx)
-            with open(cue_files[idx], 'r') as fi:
-                l = fi.readlines()
-                l[0] = 'FILE "%s" BINARY\n' % ('UD%02x.bin' % idx)
-                with open(subdir + 'UD%02x.cue' % idx, 'w') as fo:
-                    fo.writelines(l)
-                temp_files.append('UD%02x.cue' % idx)
+            retarget_cue(
+                cue_files[idx],
+                subdir + 'UD%02x.cue' % idx,
+                'UD%02x.bin' % idx,
+            )
+            temp_files.append('UD%02x.cue' % idx)
             cue_files[idx] = subdir + 'UD%02x.cue' % idx
             img_files[idx] = subdir + 'UD%02x.bin' % idx
         subprocess.run(

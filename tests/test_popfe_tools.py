@@ -97,6 +97,13 @@ class BackendToolIntegrationTests(unittest.TestCase):
         self.assertNotIn("apply_ppf_fixes(", main)
         self.assertNotIn("patch_libcrypt(", main)
 
+    def test_generated_cues_reference_staged_images(self):
+        source = (REPOSITORY_ROOT / "pop-fe.py").read_text(encoding="utf-8")
+
+        self.assertIn("copy_file(cue_file, tmpbin)", source)
+        self.assertIn("copy_file(ccd['FILE'], tmpbin)", source)
+        self.assertIn("retarget_cue(tmpcue, tmpcue", source)
+
     def test_retroarch_writes_sbi_only_for_libcrypt_discs(self):
         source = (REPOSITORY_ROOT / "pop-fe.py").read_text(encoding="utf-8")
 
