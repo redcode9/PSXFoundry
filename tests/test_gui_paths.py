@@ -11,6 +11,7 @@ from psxfoundry.gui import (
     confirm_conversion_without_fix,
     label_path_chooser,
     load_dropped_image,
+    load_theme_image,
     write_exception_log,
 )
 from psxfoundry.registry import CompatibilityAssetError
@@ -41,6 +42,18 @@ class GuiPathTests(unittest.TestCase):
             )
             self.assertEqual(image.size, (4, 3))
             image.close()
+
+    def test_theme_image_keeps_the_uppercase_match(self):
+        requested = []
+
+        def load(_theme, _disc_id, _work_dir, filename):
+            requested.append(filename)
+            return "image" if filename == "PIC0.PNG" else None
+
+        image = load_theme_image(load, "theme", "DISC", "/tmp", "PIC0")
+
+        self.assertEqual(image, "image")
+        self.assertEqual(requested, ["PIC0.PNG"])
 
     def test_gui_sources_do_not_write_relative_preferences_or_theme_files(self):
         for filename in ("pop-fe-psp.py", "pop-fe-ps3.py"):
@@ -147,8 +160,8 @@ class GuiPathTests(unittest.TestCase):
         psp_source = (REPOSITORY_ROOT / "pop-fe-psp.py").read_text(encoding="utf-8")
         ps3_source = (REPOSITORY_ROOT / "pop-fe-ps3.py").read_text(encoding="utf-8")
 
-        self.assertIn("class PspApp:", psp_source)
-        self.assertIn("class Ps3App:", ps3_source)
+        self.assertIn("class PspApp(DesktopAppMixin):", psp_source)
+        self.assertIn("class Ps3App(DesktopAppMixin):", ps3_source)
         self.assertNotIn("class CompletionDialog", psp_source + ps3_source)
 
     def test_psp_conversion_runs_behind_a_modal_progress_dialog(self):

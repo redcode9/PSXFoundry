@@ -10,15 +10,14 @@ import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox
 from psxfoundry.gui import (
+    DesktopAppMixin,
     CompletionDialog,
     ConversionTask,
-    build_plan_with_missing_fix_prompt,
     choose_image,
     clear_temporary_paths,
-    find_preview_audio_url,
     install_tk_error_handler,
     label_path_chooser,
-    render_image_preview,
+    load_theme_image,
     show_conversion_error,
 )
 from popfe_psp_import import FolderImportError, scan_psp_folder
@@ -135,7 +134,11 @@ class PreparedPspConversion:
     expectation: EbootExpectation
 
 
-class PspApp:
+class PspApp(DesktopAppMixin):
+    preview_audio_search = (
+        pytube.contrib.search.Search if have_pytube else None
+    )
+
     def __init__(self, master=None):
         self.myrect = None
         self.cue_file_orig = None
@@ -547,12 +550,6 @@ class PspApp:
                         self.builder.get_object('disc5', self.master).config(initialdir=self.path_dir)
 
 
-    def on_theme_selected(self, event):
-        self.master.config(cursor='watch')
-        self._theme = self.builder.get_object('theme', self.master).get()
-        self.update_assets()
-        self.master.config(cursor='')
-
     def fetch_pic0(self, game=None):
         disc_id = self.disc_ids[0]
 
@@ -561,9 +558,13 @@ class PspApp:
             self.pic0 = Image.open(self.pic0_path)
             self.pic0_orig = Image.open(self.pic0_path)
         if not self.pic0 and self._theme != '':
-            self.pic0_orig = popfe.get_image_from_theme(self._theme, disc_id, self.subdir, 'PIC0.PNG')
-            if not self.pic0:
-                self.pic0_orig = popfe.get_image_from_theme(self._theme, disc_id, self.subdir, 'PIC0.png')
+            self.pic0_orig = load_theme_image(
+                popfe.get_image_from_theme,
+                self._theme,
+                disc_id,
+                self.subdir,
+                'PIC0',
+            )
             self.pic0 = self.pic0_orig
         if not self.pic0:
             if game is None and disc_id in games:
@@ -575,11 +576,7 @@ class PspApp:
                 (self.pic0xoffset, self.pic0yoffset),
             )
         if self.pic0:
-            temp_files.append(self.subdir + 'PIC0.PNG')
-            self.pic0.resize((128,80), Image.Resampling.HAMMING).save(self.subdir + 'PIC0.PNG')
-            self.pic0_tk = tk.PhotoImage(file = self.subdir + 'PIC0.PNG')
-            c = self.builder.get_object('pic0_canvas', self.master)
-            c.create_image(0, 0, image=self.pic0_tk, anchor='nw')
+            self._render_artwork_preview('pic0', (128, 80), temp_files)
         
     def update_assets(self, update_icon0=True, update_pic0=True, update_pic1=True):
         if not self.disc_ids:
@@ -605,9 +602,13 @@ class PspApp:
                 self.icon0 = Image.open(self.icon0_path)
             elif self._theme != '':
                 print('Get icon0 from theme')
-                self.icon0 = popfe.get_image_from_theme(self._theme, disc_id, self.subdir, 'ICON0.PNG')
-                if not self.icon0:
-                    self.icon0 = popfe.get_image_from_theme(self._theme, disc_id, self.subdir, 'ICON0.png')
+                self.icon0 = load_theme_image(
+                    popfe.get_image_from_theme,
+                    self._theme,
+                    disc_id,
+                    self.subdir,
+                    'ICON0',
+                )
                 if self.icon0:
                     self.icon0 = self.icon0.crop(self.icon0.getbbox())
             if not self.icon0:
@@ -616,11 +617,7 @@ class PspApp:
                 else:
                     self.icon0 = Image.new('RGBA', (80, 80), (255, 255, 255, 0))
             if self.icon0:
-                temp_files.append(self.subdir + 'ICON0.PNG')
-                self.icon0.resize((80,80), Image.Resampling.HAMMING).save(self.subdir + 'ICON0.PNG')
-                self.icon0_tk = tk.PhotoImage(file = self.subdir + 'ICON0.PNG')
-                c = self.builder.get_object('icon0_canvas', self.master)
-                c.create_image(0, 0, image=self.icon0_tk, anchor='nw')
+                self._render_artwork_preview('icon0', (80, 80), temp_files)
  
         if self.snd0_disabled == 'off':
             snd0 = None
@@ -646,17 +643,17 @@ class PspApp:
             if self.pic1_path:
                 self.pic1 = Image.open(self.pic1_path)
             if not self.pic1 and self._theme != '':
-                self.pic1 = popfe.get_image_from_theme(self._theme, disc_id, self.subdir, 'PIC1.PNG')
-                if not self.pic1:
-                    self.pic1 = popfe.get_image_from_theme(self._theme, disc_id, self.subdir, 'PIC1.png')
+                self.pic1 = load_theme_image(
+                    popfe.get_image_from_theme,
+                    self._theme,
+                    disc_id,
+                    self.subdir,
+                    'PIC1',
+                )
             if not self.pic1:
                 self.pic1 = popfe.get_pic1_from_game(disc_id, game, self.cue_file_orig)
             if self.pic1:
-                temp_files.append(self.subdir + 'PIC1.PNG')
-                self.pic1.resize((128,80), Image.Resampling.HAMMING).save(self.subdir + 'PIC1.PNG')
-                self.pic1_tk = tk.PhotoImage(file = self.subdir + 'PIC1.PNG')
-                c = self.builder.get_object('pic1_canvas', self.master)
-                c.create_image(0, 0, image=self.pic1_tk, anchor='nw')
+                self._render_artwork_preview('pic1', (128, 80), temp_files)
 
         self.update_preview()
 
@@ -835,12 +832,6 @@ class PspApp:
             self.builder.get_variable('discid%d_variable' % idx).set(disc_id)
         self._apply_plan_settings()
         return plan
-
-    def _refresh_conversion_plan_with_prompt(self):
-        return build_plan_with_missing_fix_prompt(
-            self.master,
-            self._refresh_conversion_plan,
-        )
 
     def on_target_selected(self, event=None):
         self.update_prefs()
@@ -1194,13 +1185,7 @@ class PspApp:
         self.pic0 = image
         self.pic0_orig = image.copy()
         self.pic0_path = path
-        self.pic0_tk = render_image_preview(
-            image,
-            (128, 80),
-            self.subdir + 'PIC0.PNG',
-            self.builder.get_object('pic0_canvas', self.master),
-            temp_files,
-        )
+        self._render_artwork_preview('pic0', (128, 80), temp_files)
         self.update_preview()
         
     def on_pic1_clicked(self, event):
@@ -1209,13 +1194,7 @@ class PspApp:
             return
         self.pic1 = image
         self.pic1_path = path
-        self.pic1_tk = render_image_preview(
-            image,
-            (128, 80),
-            self.subdir + 'PIC1.PNG',
-            self.builder.get_object('pic1_canvas', self.master),
-            temp_files,
-        )
+        self._render_artwork_preview('pic1', (128, 80), temp_files)
         self.update_preview()
 
     def on_pic0_scaling(self, event):
@@ -1254,21 +1233,6 @@ class PspApp:
     def on_dir_changed(self, event):
         self.pkgdir = event.widget.cget('path')
         self.update_prefs()
-
-    def on_youtube_audio(self):
-        if not have_pytube:
-            return
-        self.master.config(cursor='watch')
-        try:
-            title = self.builder.get_variable('title_variable').get()
-            audio_url = find_preview_audio_url(
-                title,
-                pytube.contrib.search.Search,
-            )
-            if audio_url:
-                self.builder.get_variable('snd0_variable').set(audio_url)
-        finally:
-            self.master.config(cursor='')
 
     def _build_conversion_request(self, plan):
         output_dir = self.builder.get_variable('pkgdir_variable').get()
@@ -1571,9 +1535,6 @@ class PspApp:
             self._finish_eboot_conversion,
         )
         self.conversion_task.start()
-
-    def on_reset(self):
-        self.init_data()
 
     def on_cdda(self):
         self.cdda = self.builder.get_variable('cdda_variable').get()

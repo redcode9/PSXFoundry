@@ -128,6 +128,40 @@ class ConversionTask:
             return
 
 
+class DesktopAppMixin:
+    def on_reset(self):
+        self.init_data()
+
+    def on_theme_selected(self, _event):
+        self.master.configure(cursor='watch')
+        try:
+            self._theme = self.builder.get_object('theme', self.master).get()
+            self.update_assets()
+        finally:
+            self.master.configure(cursor='')
+
+    def on_youtube_audio(self):
+        if self.preview_audio_search is not None:
+            select_preview_audio(
+                self.master, self.builder, self.preview_audio_search
+            )
+
+    def _render_artwork_preview(self, name, size, temporary_paths):
+        preview = render_image_preview(
+            getattr(self, name),
+            size,
+            self.subdir + name.upper() + '.PNG',
+            self.builder.get_object(name + '_canvas', self.master),
+            temporary_paths,
+        )
+        setattr(self, name + '_tk', preview)
+
+    def _refresh_conversion_plan_with_prompt(self):
+        return build_plan_with_missing_fix_prompt(
+            self.master, self._refresh_conversion_plan
+        )
+
+
 def clear_temporary_paths(paths, *, verbose=False):
     for value in paths:
         path = Path(value)
@@ -160,6 +194,12 @@ def choose_image(parent, title):
     if not path or not Path(path).is_file():
         return None, None
     return path, Image.open(path)
+
+
+def load_theme_image(loader, theme, disc_id, work_dir, name):
+    return loader(theme, disc_id, work_dir, f'{name}.PNG') or loader(
+        theme, disc_id, work_dir, f'{name}.png'
+    )
 
 
 def load_dropped_image(value, fetch):
@@ -195,6 +235,17 @@ def find_preview_audio_url(title, search):
     if not result or not result.results:
         return None
     return f"https://www.youtube.com/watch?v={result.results[0].video_id}"
+
+
+def select_preview_audio(root, builder, search):
+    root.configure(cursor='watch')
+    try:
+        title = builder.get_variable('title_variable').get()
+        audio_url = find_preview_audio_url(title, search)
+        if audio_url:
+            builder.get_variable('snd0_variable').set(audio_url)
+    finally:
+        root.configure(cursor='')
 
 
 def build_plan_with_missing_fix_prompt(parent, build_plan):
