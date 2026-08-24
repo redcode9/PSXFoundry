@@ -5,29 +5,26 @@
 # PSXFoundry
 
 PSXFoundry converts PlayStation disc images for PSP, PS Vita with Adrenaline,
-PS2, PS3, PSIO, RetroArch and PlayStation Classic. It identifies each disc,
-chooses target-specific compatibility settings, keeps every target isolated and
-writes a conversion report beside the result.
+PS2, PS3, PSIO, RetroArch and PlayStation Classic. It detects each disc,
+selects target-specific compatibility settings and writes a report beside the
+result.
 
-PSXFoundry is an independent fork of
-[POP-FE](https://github.com/sahlberg/pop-fe). It exists because of Ronnie
-Sahlberg's original work and the contributions made by the POP-FE community.
-The macOS work first developed for upstream remains available in
+This project is an independent fork of
+[POP-FE](https://github.com/sahlberg/pop-fe), created by Ronnie Sahlberg and
+improved by its contributors. The original macOS contribution remains in
 [POP-FE pull request #305](https://github.com/sahlberg/pop-fe/pull/305).
 
-## What it automates
+## Features
 
-- Disc discovery and natural multidisc ordering.
-- Game ID, title, region, track layout and content hash detection.
-- Local artwork, manual and audio import before online lookup of missing items.
-- Validated SBI import, POPS configuration, CD audio mode and compression choice.
+- CUE/BIN, CCD/IMG, raw BIN or IMG, ZIP, CHD and multidisc input.
+- Natural multidisc ordering and automatic game, region and track detection.
+- Local artwork, manual, audio and SBI import before online lookup.
+- Target-specific POPS configuration, CD audio handling and compression.
 - Exact PPF or Xdelta corrections for known disc revisions.
-- Atomic output writes and structural validation of generated PBP files.
+- Structural validation and atomic output writes.
 
-Unknown revisions use a conservative lossless profile. A known serial alone is
-not enough to apply a revision-specific binary patch.
-
-## Targets
+CUE is preferred because it preserves the original track layout. Unknown disc
+revisions keep a conservative lossless profile and are never silently patched.
 
 | Target | Output |
 | --- | --- |
@@ -36,91 +33,69 @@ not enough to apply a revision-specific binary patch.
 | PS2 | POPStarter VCD and artwork |
 | PS3 | Installable PKG |
 | PSIO | BIN, CU2 and multidisc list |
-| RetroArch | BIN/CUE, M3U or PBP layouts |
+| RetroArch | BIN/CUE, M3U or PBP layout |
 | PlayStation Classic | AutoBleem PBP layout |
 
-Inputs may be CUE/BIN, CCD/IMG, raw BIN or IMG, ZIP, CHD and multidisc sets.
-CUE is preferred because it preserves the original track layout.
+## macOS
 
-## macOS quick start
-
-The prebuilt release supports Apple Silicon and macOS 14 or newer. Download
+The release supports Apple Silicon and macOS 14 or newer. Download
 `PSXFoundry-<version>-macOS-arm64.dmg` from
-[GitHub Releases](https://github.com/redcode9/PSXFoundry/releases). No Python,
-Homebrew, Rosetta or Xcode installation is required.
+[GitHub Releases](https://github.com/redcode9/PSXFoundry/releases). It does not
+require Python, Homebrew, Rosetta or Xcode.
 
 1. Drag the applications into `Applications`.
-2. Try to open an application once and dismiss the macOS warning.
-3. Open **System Settings > Privacy & Security** and choose **Open Anyway**.
-4. Open **PSXFoundry PSP**, select PSP or Adrenaline, then import a game folder.
+2. Try to open an application and dismiss the warning.
+3. Open **System Settings > Privacy & Security** and select **Open Anyway**.
 
-The release is ad-hoc signed and not notarized. Approve each application once;
-do not disable Gatekeeper. The disk image also contains the CLI and its
+The applications are ad-hoc signed and not notarized. Approve each one once;
+do not disable Gatekeeper. The disk image also contains the CLI and a
 user-local installer.
 
-## Folder import
+## PSP and Adrenaline
 
-The PSP application scans the selected folder without changing the source
-files. **Import all discs** is enabled by default and can be turned off. It
-loads up to five discs and first looks for these local assets:
+Open **PSXFoundry PSP**, select the target and import a game folder. Folder
+import finds up to five discs and can include all of them or only the first. It
+also looks for `ICON0.PNG`, `PIC0.PNG`, `PIC1.PNG`, preview audio, a manual,
+`LOGO.PNG` and an SBI file matching the disc name or serial.
 
-- `ICON0.PNG`, `PIC0.PNG` and `PIC1.PNG`;
-- `SND0.AT3` or a supported WAV file;
-- `MANUAL.PDF`, `MANUAL.ZIP`, `MANUAL.CBR` or `LOGO.PNG`;
-- an SBI file with the disc name or serial.
+Local files take priority. Missing SBI data is downloaded from
+[PSX DataCenter](https://psxdatacenter.com/sbifiles.html), checked against the
+disc and cached. If no verified fix is available, PSXFoundry explains the risk
+before allowing an unpatched conversion.
 
-Local files always win. Missing LibCrypt data is requested from
-[PSX DataCenter](https://psxdatacenter.com/sbifiles.html), validated against the
-disc and cached. Each disc also has a manual SBI selector. If no verified file
-is available, PSXFoundry explains the risk before offering its generated
-fallback. Advanced overrides remain available, but normal conversions do not
-require manual compatibility choices.
+Compatibility rules use content and layout hashes, not filenames. A known
+prepatched image keeps its existing correction. Crash Bash `SCES-02834`
+includes separate profiles for the verified European retail disc and the
+Static PAL/NTSC selector. The selector profile passed on a PSP-2000 (02g) with
+6.61 PRO-C Infinity. Other revisions use the safe default unless their exact
+hash is known.
+
+Generated files are checked for packaging errors. Real hardware, firmware,
+PopsLoader and Adrenaline can still affect compatibility.
 
 ## Command line
-
-The CLI can build several targets in one run:
 
 ```sh
 psxfoundry --psp-dir=/Volumes/PSP game.cue
 psxfoundry --psp-dir=/Volumes/VITA/pspemu game.cue
 psxfoundry --psp-dir=/Volumes/PSP --sbi game.sbi game.cue
 psxfoundry --ps3-pkg=game.pkg game.cue
-psxfoundry --retroarch-pbp-dir=./retroarch game-disc-1.cue game-disc-2.cue
+psxfoundry --retroarch-pbp-dir=./retroarch disc-1.cue disc-2.cue
 ```
 
-Use `psxfoundry --help` for every target and override. The legacy `pop-fe`
-command remains an alias for scripts that already use it.
+Run `psxfoundry --help` for every target and override. `pop-fe` remains an alias
+for existing scripts.
 
-## Compatibility policy
+## Project
 
-Automation does not make a universal hardware guarantee. Rules marked
-`verified` require a recorded device test; `reported` and `experimental` rules
-are shown as such. Unknown or mismatched revisions are never silently patched.
-Read [COMPATIBILITY.md](COMPATIBILITY.md) before reporting a title-specific
-problem.
+- [CONTRIBUTING.md](CONTRIBUTING.md) covers development and compatibility data.
+- [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) records bundled software.
 
-## Development
-
-- [COMPATIBILITY.md](COMPATIBILITY.md) — support levels and rule policy.
-- [CONTRIBUTING.md](CONTRIBUTING.md) — build, test and submit changes.
-- [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) — bundled software licenses.
-
-## Credits
-
-PSXFoundry is maintained at
-[redcode9/PSXFoundry](https://github.com/redcode9/PSXFoundry). The original
-architecture, platform support, databases, patches and most conversion code
-come from POP-FE. Thank you to Ronnie Sahlberg and every
+Thank you to Ronnie Sahlberg and every
 [POP-FE contributor](https://github.com/sahlberg/pop-fe/graphs/contributors).
-PSX DataCenter provides the online SBI index used by the resolver.
+Compatibility entries keep their source and contributor credits. PSXFoundry
+contains no games, Sony firmware or BIOS files.
 
-Compatibility entries retain their sources and contributor credits. Exact
-third-party revisions and licenses are recorded in the notices and the macOS
-dependency lock.
-
-Use only disc images and firmware files that you are legally allowed to use.
-PSXFoundry includes no games, Sony firmware or BIOS files.
-
-PSXFoundry is distributed under the
-[GNU Lesser General Public License 2.1](LICENCE-LGPL-2.1.txt).
-It is not affiliated with or endorsed by Sony Interactive Entertainment.
+PSXFoundry is licensed under the
+[GNU Lesser General Public License 2.1](LICENCE-LGPL-2.1.txt) and is not
+affiliated with Sony Interactive Entertainment.

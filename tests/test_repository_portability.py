@@ -17,11 +17,11 @@ class RepositoryPortabilityTests(unittest.TestCase):
     def test_public_documentation_replaces_internal_notes(self):
         required = {
             "README.md",
-            "COMPATIBILITY.md",
             "CONTRIBUTING.md",
             "THIRD_PARTY_NOTICES.md",
         }
         retired = {
+            "COMPATIBILITY.md",
             "README",
             "README.popstation",
             "CREDITS.md",

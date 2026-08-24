@@ -1,38 +1,39 @@
 # Contributing
 
-Keep changes narrow and explain the observable result. Commit subjects should
-be short, declarative and free of process commentary.
+Keep changes narrow and describe the result. Use short declarative commit
+subjects. Do not add process notes to code or documentation.
 
-## Code structure
+## Code
 
-Preserve the CLI, application behaviour and output formats. Internal Python
-interfaces may change when clearer boundaries reduce duplication.
+- Preserve public commands, application behaviour and output formats.
+- Put disc planning and validation in focused `psxfoundry` modules.
+- Share desktop dialogs and repeated PSP/PS3 behaviour.
+- Use descriptive names and short functions.
+- Comment only constraints that the code cannot express, in English.
+- Do not edit generated databases, patches or external projects unless needed.
 
-- Keep target planning, disc preparation and validation in focused
-  `psxfoundry` modules.
-- Share dialogs, artwork handling and conversion state between the PSP and PS3
-  applications.
-- Split conversion orchestration by phase and use descriptive function and
-  variable names.
-- Comment only constraints that the code cannot express, using short English
-  sentences.
-- Leave generated databases, compatibility data, patches and external
-  projects unchanged unless the task directly requires them.
+Both applications use one window: inputs on the left, preview on the right and
+output actions in the footer. Advanced settings stay closed by default.
 
-Both desktop applications use one window with the same layout: inputs and
-metadata on the left, preview and artwork on the right, and output controls in
-a stable footer. Advanced overrides stay collapsed by default. Every action
-uses a text label and conversions show progress without blocking the interface.
+## Compatibility data
 
-Production code should shrink when a refactor removes duplication. Conversion
-orchestrators should delegate to short phase functions, and PSP/PS3 GUI clones
-belong in shared helpers. Release checks cover unit tests, both applications,
-the CLI, packaged conversions and the mounted DMG.
+Rules live in `compatibility/catalog` and follow
+`compatibility/schema.json`. An exact content or layout hash outranks a serial.
+Binary patches require an exact source hash. Referenced files must be
+redistributable, remain inside the repository and include their SHA-256.
+
+Use `verified` only after a passing test on a named device and firmware. Use
+`reported` for a sourced correction awaiting a hardware pass and
+`experimental` for work still under evaluation. Add the smallest correction
+for the exact revision and cover its registry, planner and conversion paths.
+
+A useful hardware report includes the target, input SHA-256, track layout,
+device, firmware, emulator version and the observed result. Do not upload game
+images, BIOS files, firmware or copyrighted boot files.
 
 ## Setup
 
-Clone submodules and use an isolated Python environment. Python 3.12 is the
-release baseline; pyenv works well:
+Python 3.12 is the release baseline:
 
 ```sh
 git clone --recursive https://github.com/redcode9/PSXFoundry.git
@@ -43,31 +44,20 @@ python -m venv .venv
 .venv/bin/python -m pip install -r packaging/macos/requirements-runtime.txt
 ```
 
-Source conversions also need the native helpers required by their selected
-targets: ATRACDENC, Xdelta3, CHDMan, LibCrypt Patcher, PSX-Undither, Cue2cu2,
-binmerge and PSL1GHT ps3py. Tk, a C/C++ toolchain, CMake, libsndfile and FFmpeg
-are needed to build them. `pop-fe.py --install` retains the upstream bootstrap;
-run it only in a disposable clone and virtual environment.
+Source conversions also need the native helper for each selected target. The
+macOS build scripts compile and bundle the locked revisions.
 
 ## Checks
-
-Run before opening a pull request:
 
 ```sh
 .venv/bin/python -m unittest discover -s tests -v
 git diff --check
-```
-
-Changes to macOS packaging must also pass:
-
-```sh
 packaging/macos/build-apps.sh
 packaging/macos/smoke-apps.sh
 tests/integration/smoke-macos-conversions.sh build/macos/dist/psxfoundry
 ```
 
-Build the Apple Silicon release with native Python 3.12 and the locked helper
-revisions:
+Build an Apple Silicon disk image with:
 
 ```sh
 git submodule update --init --recursive
@@ -78,22 +68,10 @@ PSXFOUNDRY_VERSION="$release_version" packaging/macos/create-dmg.sh
 packaging/macos/smoke-dmg.sh "build/macos/PSXFoundry-$release_version-macOS-arm64.dmg"
 ```
 
-Every packaged Mach-O must be ARM64, target macOS 14 or older, and contain no
-Homebrew or build-directory load path. Test Gatekeeper using the downloaded
-candidate. Unavailable hardware is `not tested`, never `passed`.
+Every packaged Mach-O must be ARM64 and free of Homebrew or build-directory
+load paths. Test the downloaded candidate with Gatekeeper. Unavailable hardware
+is `not tested`, never `passed`.
 
-## Pull requests
-
-- Do not add games, BIOS files, Sony firmware or files copied from another game.
-- Do not mark compatibility as verified without a recorded hardware pass.
-- Include exact hashes for every revision-specific patch or configuration.
-- Preserve attribution and third-party license notices.
-- Update user documentation only when behaviour changed.
-- Keep generated build output and local diagnostics out of Git.
-
-Generic POP-FE fixes may also belong upstream. Fork-specific identity,
-compatibility policy and release work should target PSXFoundry.
-
-`popstation.py` creates or inspects PBP files; `vmp.py` converts signed PSP VMP
-memory cards. Run either tool with `--help`. The Dockerfile exposes the source
-CLI for platforms without a maintained binary release.
+Do not commit build output or diagnostics. Preserve attribution and licenses.
+Generic POP-FE fixes may be proposed upstream; fork identity and release work
+belongs only in PSXFoundry.
