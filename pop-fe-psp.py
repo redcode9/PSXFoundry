@@ -5,7 +5,6 @@ from dataclasses import dataclass
 import hashlib
 import os
 import pygubu
-import shutil
 import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox
@@ -15,10 +14,14 @@ from psxfoundry.gui import (
     ConversionTask,
     choose_image,
     clear_temporary_paths,
+    import_disc_image,
     install_tk_error_handler,
     label_path_chooser,
     load_theme_image,
+    read_preferences,
+    reset_work_directory,
     show_conversion_error,
+    write_preferences,
 )
 from popfe_psp_import import FolderImportError, scan_psp_folder
 from popfe_runtime import runtime as popfe_runtime
@@ -45,8 +48,8 @@ have_pytube = False
 try:
     import pytubefix as pytube
     have_pytube = True
-except:
-    True
+except ImportError:
+    pass
 
 from PIL import Image
 import importlib
@@ -54,7 +57,7 @@ from gamedb import games, libcrypt, themes
 from layout import image_has_transparency
 try:
     import popfe
-except:
+except ImportError:
     popfe = importlib.import_module("pop-fe")
 
 verbose = False
@@ -141,25 +144,6 @@ class PspApp(DesktopAppMixin):
 
     def __init__(self, master=None):
         self.myrect = None
-        self.cue_file_orig = None
-        self.cue_files = None
-        self.real_cue_files = None
-        self.img_files = None
-        self.disc_ids = None
-        self.md5_sums = None
-        self.real_disc_ids = None
-        self.sbi_selections = None
-        self.sbi_errors = None
-        self.sbi_checked = None
-        self.icon0 = None
-        self.icon0_tk = None
-        self.pic0 = None
-        self.pic0_orig = None
-        self.pic0_path = None
-        self.pic0_tk = None
-        self.pic1 = None
-        self.pic1_path = None
-        self.pic1_tk = None
         self.pkgdir = None
         self.watermark = 'on'
         self.nopstitleimg = 'off'
@@ -174,9 +158,6 @@ class PspApp(DesktopAppMixin):
         self.pic0scaling = 0.9
         self.pic0xoffset = 0.1
         self.pic0yoffset = 0.1
-        self.manual = None
-        self.icon0_path = None
-        self.snd0_path = None
         self.path_dir = None
         self.conversion_plan = None
         self.conversion_task = None
@@ -206,20 +187,19 @@ class PspApp(DesktopAppMixin):
         self.builder.get_object('frame4', self.master).columnconfigure(0, weight=1)
         self.builder.get_object('frame4', self.master).columnconfigure(1, weight=1)
         self._theme = ''
-        o = ['']
-        for theme in themes:
-            o.append(theme)
-        self.builder.get_object('theme', self.master).configure(values=o)
+        theme_names = ('', *themes)
+        self.builder.get_object('theme', self.master).configure(
+            values=theme_names
+        )
         self.init_data()
         try:
             self.read_prefs()
-        except:
-            True
+        except (OSError, ValueError):
+            pass
 
     def __del__(self):
-        global temp_files
         clear_temporary_paths(temp_files, verbose=verbose)
-        temp_files = []
+        temp_files.clear()
 
     def _configure_layout(self):
         self.mainwindow.columnconfigure(0, weight=1, uniform='content')
@@ -445,119 +425,108 @@ class PspApp(DesktopAppMixin):
         self._update_plan_summary()
 
     def init_data(self):
-        global temp_files
-        if temp_files:
-            for f in temp_files:
-                try:
-                    os.unlink(f)
-                except:
-                    try:
-                        os.rmdir(f)
-                    except:
-                        True
+        reset_work_directory(self.subdir, temp_files)
 
-        temp_files = []  
-        temp_files.append(self.subdir)
-        shutil.rmtree(self.subdir, ignore_errors=True)
-        os.mkdir(self.subdir)
-
-        self.cue_files = []
-        self.real_cue_files = []
-        self.img_files = []
-        self.disc_ids = []
-        self.md5_sums = []
-        self.real_disc_ids = []
+        self._reset_imported_discs()
+        self._reset_artwork()
         self.sbi_selections = []
         self.sbi_errors = []
         self.sbi_checked = []
-        self.icon0 = None
-        self.icon0_tk = None
-        self.pic0 = None
-        self.pic0_orig = None
-        self.pic0_path = None
-        self.pic0_tk = None
-        self.pic1 = None
-        self.pic1_path = None
-        self.pic1_tk = None
-        self.preview_tk = None
-        self.manual = None
         self.icon0_path = None
         self.snd0_path = None
-        for idx in range(1,6):
-            self.builder.get_object('discid%d' % (idx), self.master).config(state='disabled')
-            self.builder.get_object(
-                'disc' + str(idx), self.master
-            ).config(
+        for disc_number in range(1, 6):
+            disc_input = self.builder.get_object(
+                f'disc{disc_number}', self.master
+            )
+            disc_input.configure(
                 filetypes=[
                     ('Image files', ['.cue', '.ccd', '.img', '.iso', '.zip', '.chd']),
                     ('All Files', ['*.*', '*']),
-                ]
+                ],
+                state='disabled',
             )
-            self.builder.get_variable('disc%d_variable' % (idx)).set('')
-            self.builder.get_variable('discid%d_variable' % (idx)).set('')
-            self.builder.get_object('disc' + str(idx), self.master).config(state='disabled')
-            self.builder.get_object('disc' + str(idx), self.master).grid_remove()
-            self.builder.get_object('discid%d' % (idx), self.master).grid_remove()
-            self.builder.get_object('sbi%d_button' % idx, self.master).grid_remove()
-        self.builder.get_object('add_disc_button', self.master).config(state='normal')
-        self.builder.get_object('create_button', self.master).config(state='disabled')
-        self.builder.get_object('youtube_button', self.master).config(state='disabled')
-        self.builder.get_object('pic0scaling', self.master).config(state='disabled')
-        self.builder.get_object('pic0xoffset', self.master).config(state='disabled')
-        self.builder.get_object('pic0yoffset', self.master).config(state='disabled')
-        self.builder.get_variable('title_variable').set('')
-        self.builder.get_variable('snd0_variable').set('')
-        self.builder.get_object('snd0', self.master).config(filetypes=[('Audio files', ['.wav']), ('All Files', ['*.*', '*'])])
-        self.builder.get_variable('logo_variable').set('')
-        self.builder.get_object('logo', self.master).config(filetypes=[('Audio files', ['.png', '.PNG']), ('All Files', ['*.*', '*'])])
-
-        self.builder.get_object('manual', self.master).config(state='disabled')
-        self.builder.get_object('manual', self.master).config(filetypes=[('All Files', ['*.*', '*'])])
-        self.builder.get_variable('manual_variable').set('')
-        self.builder.get_variable('pic0scaling_variable').set('')
-        self.builder.get_variable('pic0xoffset_variable').set('')
-        self.builder.get_variable('pic0yoffset_variable').set('')
-        self.builder.get_variable('import_summary_variable').set('')
-        self.builder.get_variable('plan_summary_variable').set('')
+            self._clear_variables(
+                f'disc{disc_number}_variable',
+                f'discid{disc_number}_variable',
+            )
+            for object_id in (
+                f'disc{disc_number}',
+                f'discid{disc_number}',
+                f'sbi{disc_number}_button',
+            ):
+                self.builder.get_object(object_id, self.master).grid_remove()
+        self._set_controls_state('normal', 'add_disc_button')
+        self._set_controls_state(
+            'disabled',
+            'create_button',
+            'youtube_button',
+            'pic0scaling',
+            'pic0xoffset',
+            'pic0yoffset',
+            'manual',
+        )
+        self._clear_variables(
+            'title_variable',
+            'snd0_variable',
+            'logo_variable',
+            'manual_variable',
+            'pic0scaling_variable',
+            'pic0xoffset_variable',
+            'pic0yoffset_variable',
+            'import_summary_variable',
+            'plan_summary_variable',
+        )
+        self.builder.get_object('snd0', self.master).configure(
+            filetypes=[
+                ('Audio files', ['.wav']),
+                ('All Files', ['*.*', '*']),
+            ]
+        )
+        self.builder.get_object('logo', self.master).configure(
+            filetypes=[
+                ('Image files', ['.png', '.PNG']),
+                ('All Files', ['*.*', '*']),
+            ]
+        )
+        self.builder.get_object('manual', self.master).configure(
+            filetypes=[('All Files', ['*.*', '*'])]
+        )
         self.conversion_plan = None
         self._apply_automatic_settings()
 
     def update_prefs(self):
-        PREFERENCES_PATH.parent.mkdir(parents=True, exist_ok=True)
-        with open(PREFERENCES_PATH, "w") as f:
-            f.write('%s:%s\n' % ('target', self.builder.get_variable('target_variable').get()))
-            f.write('%s:%s\n' % ('dir', self.builder.get_variable('pkgdir_variable').get()))
-            if self.path_dir:
-                f.write('%s:%s\n' % ('path', self.path_dir))
-
+        preferences = [
+            (
+                'target',
+                self.builder.get_variable('target_variable').get(),
+            ),
+            ('dir', self.builder.get_variable('pkgdir_variable').get()),
+        ]
+        if self.path_dir:
+            preferences.append(('path', self.path_dir))
+        write_preferences(PREFERENCES_PATH, preferences)
 
     def read_prefs(self):
-        with open(PREFERENCES_PATH, "r") as f:
-            for x in f.read().splitlines():
-                key, val = x.split(':', 1)
-                if key == 'target' and val in TARGET_VALUES:
-                    self.builder.get_variable('target_variable').set(val)
-                if key == 'dir':
-                    self.builder.get_variable('pkgdir_variable').set(val)
-                    self.pkgdir = val
-                if key == 'path':
-                    self.path_dir = val
-                    if self.path_dir:
-                        self.builder.get_object('disc1', self.master).config(initialdir=self.path_dir)
-                        self.builder.get_object('disc2', self.master).config(initialdir=self.path_dir)
-                        self.builder.get_object('disc3', self.master).config(initialdir=self.path_dir)
-                        self.builder.get_object('disc4', self.master).config(initialdir=self.path_dir)
-                        self.builder.get_object('disc5', self.master).config(initialdir=self.path_dir)
+        preferences = read_preferences(PREFERENCES_PATH)
+        target = preferences.get('target')
+        if target in TARGET_VALUES:
+            self.builder.get_variable('target_variable').set(target)
 
+        output_directory = preferences.get('dir')
+        if output_directory is not None:
+            self.builder.get_variable('pkgdir_variable').set(output_directory)
+            self.pkgdir = output_directory
 
-    def fetch_pic0(self, game=None):
-        disc_id = self.disc_ids[0]
+        self.path_dir = preferences.get('path', self.path_dir)
+        if self.path_dir:
+            self._set_disc_initial_directory(self.path_dir)
 
+    def _load_logo_artwork(self, disc_id, game):
         self.pic0 = None
         if self.pic0_path:
             self.pic0 = Image.open(self.pic0_path)
-            self.pic0_orig = Image.open(self.pic0_path)
-        if not self.pic0 and self._theme != '':
+            self.pic0_orig = self.pic0.copy()
+        if not self.pic0 and self._theme:
             self.pic0_orig = load_theme_image(
                 popfe.get_image_from_theme,
                 self._theme,
@@ -569,7 +538,12 @@ class PspApp(DesktopAppMixin):
         if not self.pic0:
             if game is None and disc_id in games:
                 game = popfe.get_game_from_gamelist(disc_id)
-            self.pic0_orig = popfe.get_pic0_from_game(disc_id, game, self.cue_file_orig, no_scaling=True)
+            self.pic0_orig = popfe.get_pic0_from_game(
+                disc_id,
+                game,
+                self.cue_file_orig,
+                no_scaling=True,
+            )
             self.pic0 = popfe.rescale_pic0(
                 self.pic0_orig,
                 self.pic0scaling,
@@ -577,12 +551,69 @@ class PspApp(DesktopAppMixin):
             )
         if self.pic0:
             self._render_artwork_preview('pic0', (128, 80), temp_files)
-        
-    def update_assets(self, update_icon0=True, update_pic0=True, update_pic1=True):
-        if not self.disc_ids:
+
+    def _load_icon_artwork(self, disc_id, game):
+        self.icon0 = None
+        if self.icon0_path:
+            self.icon0 = Image.open(self.icon0_path)
+        elif self._theme:
+            self.icon0 = load_theme_image(
+                popfe.get_image_from_theme,
+                self._theme,
+                disc_id,
+                self.subdir,
+                'ICON0',
+            )
+            if self.icon0:
+                self.icon0 = self.icon0.crop(self.icon0.getbbox())
+
+        if not self.icon0:
+            if disc_id in games:
+                self.icon0 = popfe.get_icon0_from_game(
+                    disc_id,
+                    game,
+                    self.cue_file_orig,
+                    self.subdir + 'ICON0.PNG',
+                    psp_ntsc_u_frame=(
+                        self.builder.get_variable(
+                            'ntsc_u_icon0_variable'
+                        ).get() == 'on'
+                    ),
+                    psn_frame_size=((80, 80), (62, 62)),
+                )
+            else:
+                self.icon0 = Image.new(
+                    'RGBA', (80, 80), (255, 255, 255, 0)
+                )
+
+        if self.icon0:
+            self._render_artwork_preview('icon0', (80, 80), temp_files)
+
+    def _load_preview_audio(self, disc_id):
+        if self.snd0_disabled != 'off':
             return
-        if not self.cue_file_orig:
+
+        audio_path = self.snd0_path
+        if not audio_path and self._theme:
+            audio_path = popfe.get_snd0_from_theme(
+                self._theme, disc_id, self.subdir
+            )
+            if audio_path:
+                temp_files.append(audio_path)
+        if not audio_path:
+            audio_path = games.get(disc_id, {}).get('snd0')
+        if audio_path:
+            self.builder.get_variable('snd0_variable').set(audio_path)
+
+    def update_assets(
+        self,
+        update_icon0=True,
+        update_pic0=True,
+        update_pic1=True,
+    ):
+        if not self.disc_ids or not self.cue_file_orig:
             return
+
         disc_id = self.disc_ids[0]
         needs_game_data = (
             (update_icon0 and not self.icon0_path)
@@ -596,64 +627,26 @@ class PspApp(DesktopAppMixin):
         )
 
         if update_icon0:
-            print('Fetching ICON0') if verbose else None
-            self.icon0 = None
-            if self.icon0_path:
-                self.icon0 = Image.open(self.icon0_path)
-            elif self._theme != '':
-                print('Get icon0 from theme')
-                self.icon0 = load_theme_image(
-                    popfe.get_image_from_theme,
-                    self._theme,
-                    disc_id,
-                    self.subdir,
-                    'ICON0',
-                )
-                if self.icon0:
-                    self.icon0 = self.icon0.crop(self.icon0.getbbox())
-            if not self.icon0:
-                if disc_id in games:
-                    self.icon0 = popfe.get_icon0_from_game(disc_id, game, self.cue_file_orig, self.subdir + 'ICON0.PNG', psp_ntsc_u_frame=self.builder.get_variable('ntsc_u_icon0_variable').get() == 'on', psn_frame_size=((80,80),(62,62)))
-                else:
-                    self.icon0 = Image.new('RGBA', (80, 80), (255, 255, 255, 0))
-            if self.icon0:
-                self._render_artwork_preview('icon0', (80, 80), temp_files)
- 
+            if verbose:
+                print('Fetching ICON0')
+            self._load_icon_artwork(disc_id, game)
+
         if self.snd0_disabled == 'off':
-            snd0 = None
-            print('Fetching SND0') if verbose else None
-            if self.snd0_path:
-                snd0 = self.snd0_path
-            elif self._theme != '':
-                snd0 = popfe.get_snd0_from_theme(self._theme, disc_id, self.subdir)
-                if snd0:
-                    temp_files.append(snd0)
-            if not snd0 and disc_id in games and 'snd0' in games[disc_id]:
-                snd0 = games[disc_id]['snd0']
-            if snd0:
-                self.builder.get_variable('snd0_variable').set(snd0)
-                
+            if verbose:
+                print('Fetching SND0')
+            self._load_preview_audio(disc_id)
+
         if update_pic0:
-            print('Fetching PIC0') if verbose else None
-            self.fetch_pic0(game=game)
-        
+            if verbose:
+                print('Fetching PIC0')
+            self._load_logo_artwork(disc_id, game)
+
         if update_pic1:
-            print('Fetching PIC1') if verbose else None
-            self.pic1 = None
-            if self.pic1_path:
-                self.pic1 = Image.open(self.pic1_path)
-            if not self.pic1 and self._theme != '':
-                self.pic1 = load_theme_image(
-                    popfe.get_image_from_theme,
-                    self._theme,
-                    disc_id,
-                    self.subdir,
-                    'PIC1',
-                )
-            if not self.pic1:
-                self.pic1 = popfe.get_pic1_from_game(disc_id, game, self.cue_file_orig)
-            if self.pic1:
-                self._render_artwork_preview('pic1', (128, 80), temp_files)
+            if verbose:
+                print('Fetching PIC1')
+            self._load_background_artwork(
+                popfe, temp_files, disc_id, game
+            )
 
         self.update_preview()
 
@@ -772,24 +765,30 @@ class PspApp(DesktopAppMixin):
         self._select_sbi(4)
 
     def _sync_disc_rows(self):
-        loaded = len(self.cue_files)
-        for idx in range(1, 6):
-            chooser = self.builder.get_object('disc%d' % idx, self.master)
-            disc_id = self.builder.get_object('discid%d' % idx, self.master)
-            sbi_button = self.builder.get_object('sbi%d_button' % idx, self.master)
-            if idx <= loaded:
+        loaded_count = len(self.cue_files)
+        for disc_number in range(1, 6):
+            chooser = self.builder.get_object(
+                f'disc{disc_number}', self.master
+            )
+            disc_id_input = self.builder.get_object(
+                f'discid{disc_number}', self.master
+            )
+            sbi_button = self.builder.get_object(
+                f'sbi{disc_number}_button', self.master
+            )
+            if disc_number <= loaded_count:
                 chooser.grid()
-                disc_id.grid()
+                disc_id_input.grid()
                 sbi_button.grid()
                 chooser.config(state='disabled')
-                disc_id.config(state='normal')
-                self._update_sbi_button(idx - 1)
+                disc_id_input.config(state='normal')
+                self._update_sbi_button(disc_number - 1)
             else:
                 chooser.grid_remove()
-                disc_id.grid_remove()
+                disc_id_input.grid_remove()
                 sbi_button.grid_remove()
         self.builder.get_object('add_disc_button', self.master).config(
-            state='disabled' if loaded >= 5 else 'normal'
+            state='disabled' if loaded_count >= 5 else 'normal'
         )
 
     def _target(self):
@@ -828,8 +827,10 @@ class PspApp(DesktopAppMixin):
                 self.sbi_errors[index] = error
                 self.sbi_checked[index] = True
             self._update_sbi_button(index)
-        for idx, disc_id in enumerate(plan.output_disc_ids, start=1):
-            self.builder.get_variable('discid%d_variable' % idx).set(disc_id)
+        for disc_number, disc_id in enumerate(plan.output_disc_ids, start=1):
+            self.builder.get_variable(
+                f'discid{disc_number}_variable'
+            ).set(disc_id)
         self._apply_plan_settings()
         return plan
 
@@ -870,88 +871,103 @@ class PspApp(DesktopAppMixin):
     def on_restore_automatic(self):
         self._apply_automatic_settings(refresh_assets=True)
 
-    def load_disc(self, source_path, idx, fallback_title=None, refresh_plan=True):
-        if idx != len(self.cue_files) + 1 or idx > 5:
+    def _apply_game_defaults(self, disc_id, game):
+        if not self.manual and 'manual' in game:
+            if verbose:
+                print('Found a manual for', disc_id)
+            self.manual = game['manual']
+        if 'psp-use-cdda' in game:
+            self.cdda = 'on'
+            self.builder.get_variable('cdda_variable').set(self.cdda)
+
+    def _configure_first_disc(self, disc_id, game, fallback_title):
+        title = popfe.get_title_from_game(disc_id)
+        if title == 'Unknown' and fallback_title:
+            title = fallback_title
+        self.builder.get_variable('title_variable').set(title)
+
+        self.pic0scaling = game.get('pic0-scaling', 0.9)
+        self.pic0xoffset, self.pic0yoffset = game.get(
+            'pic0-offset', (0.1, 0.1)
+        )
+        values = {
+            'pic0scaling_variable': self.pic0scaling,
+            'pic0xoffset_variable': self.pic0xoffset,
+            'pic0yoffset_variable': self.pic0yoffset,
+            'manual_variable': self.manual or '',
+        }
+        for variable_name, value in values.items():
+            self.builder.get_variable(variable_name).set(value)
+        self._set_controls_state(
+            'normal',
+            'pic0scaling',
+            'pic0xoffset',
+            'pic0yoffset',
+            'manual',
+            'youtube_button',
+            'create_button',
+        )
+        self.update_assets()
+
+    def load_disc(
+        self,
+        source_path,
+        disc_number,
+        fallback_title=None,
+        refresh_plan=True,
+    ):
+        if disc_number != len(self.cue_files) + 1 or disc_number > 5:
             raise ValueError('Discs must be loaded in order, up to five.')
 
         source_path = os.path.abspath(source_path)
         self.path_dir = os.path.dirname(source_path)
-        self.builder.get_variable('disc%d_variable' % idx).set(source_path)
-        self.cue_file_orig = source_path
-        print('Processing', source_path) if verbose else None
+        self.builder.get_variable(
+            f'disc{disc_number}_variable'
+        ).set(source_path)
+        if verbose:
+            print('Processing', source_path)
 
-        cue_file, real_cue_file, img_file = popfe.process_disk_file(
-            source_path, idx, temp_files, subdir=self.subdir
+        disc = import_disc_image(
+            popfe,
+            source_path,
+            disc_number,
+            temp_files,
+            self.subdir,
+            is_psp=True,
         )
-        self.cue_file_orig = real_cue_file
-
-        print('Scanning for Game ID') if verbose else None
-        tmp = self.subdir + 'TMP%02d.iso' % idx
-        disc_id, md5 = popfe.get_disc_id(
-            cue_file, self.cue_file_orig, tmp, is_psp=True
-        )
-        print('ID', disc_id)
-        temp_files.append(tmp)
-        self.builder.get_variable('discid%d_variable' % idx).set(disc_id)
-
-        self.img_files.append(img_file)
-        self.disc_ids.append(disc_id)
-        self.md5_sums.append(md5)
-        self.real_disc_ids.append(disc_id)
-        self.cue_files.append(cue_file)
-        self.real_cue_files.append(real_cue_file)
+        if verbose:
+            print('ID', disc.disc_id)
+        self.builder.get_variable(
+            f'discid{disc_number}_variable'
+        ).set(disc.disc_id)
+        self._record_imported_disc(disc)
         self.sbi_selections.append(None)
         self.sbi_errors.append(None)
         self.sbi_checked.append(False)
 
-        if not self.manual and disc_id in games and 'manual' in games[disc_id]:
-            print('Found a manual for', disc_id) if verbose else None
-            self.manual = games[disc_id]['manual']
-        if disc_id in games and 'psp-use-cdda' in games[disc_id]:
-            self.cdda = 'on'
-            self.builder.get_variable('cdda_variable').set(self.cdda)
-
-        if idx == 1:
-            title = popfe.get_title_from_game(disc_id)
-            if title == 'Unknown' and fallback_title:
-                title = fallback_title
-            self.builder.get_variable('title_variable').set(title)
-
-            if disc_id in games and 'pic0-scaling' in games[disc_id]:
-                self.pic0scaling = games[disc_id]['pic0-scaling']
-            else:
-                self.pic0scaling = 0.9
-            self.builder.get_variable('pic0scaling_variable').set(self.pic0scaling)
-            self.builder.get_object('pic0scaling', self.master).config(state='normal')
-
-            if disc_id in games and 'pic0-offset' in games[disc_id]:
-                self.pic0xoffset, self.pic0yoffset = games[disc_id]['pic0-offset']
-            else:
-                self.pic0xoffset = 0.1
-                self.pic0yoffset = 0.1
-            self.builder.get_variable('pic0xoffset_variable').set(self.pic0xoffset)
-            self.builder.get_variable('pic0yoffset_variable').set(self.pic0yoffset)
-            self.builder.get_object('pic0xoffset', self.master).config(state='normal')
-            self.builder.get_object('pic0yoffset', self.master).config(state='normal')
-            self.builder.get_variable('manual_variable').set(self.manual or '')
-            self.builder.get_object('manual', self.master).config(state='normal')
-            self.update_assets()
-            self.builder.get_object('youtube_button', self.master).config(state='normal')
-            self.builder.get_object('create_button', self.master).config(state='normal')
+        game = games.get(disc.disc_id, {})
+        self._apply_game_defaults(disc.disc_id, game)
+        if disc_number == 1:
+            self._configure_first_disc(
+                disc.disc_id, game, fallback_title
+            )
 
         self._sync_disc_rows()
         if refresh_plan:
             self._refresh_conversion_plan()
         self.update_prefs()
-        print('Finished processing disc') if verbose else None
+        if verbose:
+            print('Finished processing disc')
 
-    def _load_disc_with_dialog(self, source_path, idx, fallback_title=None):
+    def _load_disc_with_dialog(
+        self, source_path, disc_number, fallback_title=None
+    ):
         self.master.config(cursor='watch')
         self.master.update()
         try:
             self.load_disc(
                 source_path,
-                idx,
+                disc_number,
                 fallback_title=fallback_title,
                 refresh_plan=False,
             )
@@ -965,8 +981,8 @@ class PspApp(DesktopAppMixin):
         return True
 
     def on_add_disc(self):
-        idx = len(self.cue_files) + 1
-        if idx > 5:
+        disc_number = len(self.cue_files) + 1
+        if disc_number > 5:
             return
         source_path = filedialog.askopenfilename(
             title='Select PlayStation disc image',
@@ -974,7 +990,7 @@ class PspApp(DesktopAppMixin):
             filetypes=DISC_FILETYPES,
         )
         if source_path:
-            self._load_disc_with_dialog(source_path, idx)
+            self._load_disc_with_dialog(source_path, disc_number)
 
     def _apply_folder_assets(self, assets):
         self.icon0_path = str(assets['icon0']) if 'icon0' in assets else None
@@ -1047,11 +1063,13 @@ class PspApp(DesktopAppMixin):
         self.init_data()
         self.path_dir = str(result.directory)
         self._apply_folder_assets(result.assets)
-        for idx, source_path in enumerate(result.discs, start=1):
+        for disc_number, source_path in enumerate(result.discs, start=1):
             self.load_disc(
                 str(source_path),
-                idx,
-                fallback_title=result.fallback_title if idx == 1 else None,
+                disc_number,
+                fallback_title=(
+                    result.fallback_title if disc_number == 1 else None
+                ),
                 refresh_plan=False,
             )
         if prompt_for_missing_fix:
@@ -1093,53 +1111,68 @@ class PspApp(DesktopAppMixin):
         source_path = event.widget.cget('path')
         if not source_path:
             return
-        idx = int(event.widget.cget('title')[1])
-        self._load_disc_with_dialog(source_path, idx)
+        disc_number = int(event.widget.cget('title')[1])
+        self._load_disc_with_dialog(source_path, disc_number)
 
 
     def update_preview(self):
-        if not len(self.disc_ids):
+        if not self.disc_ids:
             return
 
         if self.pic0_disabled == 'on':
-            _pic0 = None
+            logo = None
         else:
-            _pic0 = popfe.rescale_pic0(
+            logo = popfe.rescale_pic0(
                 self.pic0_orig,
                 self.pic0scaling,
                 (self.pic0xoffset, self.pic0yoffset),
             )
         if self.pic1_disabled == 'on':
-            _pic1 = Image.new('RGBA', (1920, 1080), (0,0,0))
-            _pic1.putalpha(0)
+            background = None
         else:
-            _pic1 = self.pic1
+            background = self.pic1
 
-        if _pic0 and self.pic0.mode == 'P':
-            _pic0 = _pic0.convert(mode='RGBA')
-        c = self.builder.get_object('preview_canvas', self.master)
-        if _pic1:
-            p1 = _pic1.resize((382,216), Image.Resampling.HAMMING)
+        if logo and logo.mode == 'P':
+            logo = logo.convert(mode='RGBA')
+        if background:
+            preview = background.resize(
+                (382, 216), Image.Resampling.HAMMING
+            )
         else:
-            p1 = Image.new('RGBA', (382,216), (0,0,0))
-        p1 = p1.convert('RGBA')
-        if _pic0:
-            p0 = _pic0.resize((int(p1.size[0] * 0.55) , int(p1.size[1] * 0.58)), Image.Resampling.HAMMING)
-            if image_has_transparency(p0):
-                Image.Image.paste(p1, p0, box=(148,79), mask=p0)
-            else:
-                Image.Image.paste(p1, p0, box=(148,79))
+            preview = Image.new('RGBA', (382, 216), (0, 0, 0, 0))
+        preview = preview.convert('RGBA')
+
+        if logo:
+            logo = logo.resize(
+                (
+                    int(preview.size[0] * 0.55),
+                    int(preview.size[1] * 0.58),
+                ),
+                Image.Resampling.HAMMING,
+            )
+            preview.paste(
+                logo,
+                (148, 79),
+                logo if image_has_transparency(logo) else None,
+            )
         if self.icon0:
-            i0 = self.icon0.resize((int(p1.size[1] * 0.25) , int(p1.size[1] * 0.25)), Image.Resampling.HAMMING)
-            if image_has_transparency(i0):
-                Image.Image.paste(p1, i0, box=(36,81), mask=i0)
-            else:
-                Image.Image.paste(p1, i0, box=(36,81))
-        temp_files.append(self.subdir + 'PREVIEW.PNG')
-        p1.save(self.subdir + 'PREVIEW.PNG')
-        self.preview_tk = tk.PhotoImage(file = self.subdir + 'PREVIEW.PNG')
-        c = self.builder.get_object('preview_canvas', self.master)
-        c.create_image(0, 0, image=self.preview_tk, anchor='nw')
+            icon_size = int(preview.size[1] * 0.25)
+            icon = self.icon0.resize(
+                (icon_size, icon_size), Image.Resampling.HAMMING
+            )
+            preview.paste(
+                icon,
+                (36, 81),
+                icon if image_has_transparency(icon) else None,
+            )
+
+        preview_path = self.subdir + 'PREVIEW.PNG'
+        temp_files.append(preview_path)
+        preview.save(preview_path)
+        self.preview_tk = tk.PhotoImage(file=preview_path)
+        canvas = self.builder.get_object('preview_canvas', self.master)
+        canvas.delete('all')
+        canvas.create_image(0, 0, image=self.preview_tk, anchor='nw')
         
 
     def on_nopstitleimg(self):
@@ -1199,41 +1232,43 @@ class PspApp(DesktopAppMixin):
 
     def on_pic0_scaling(self, event):
         try:
-            v = float(self.builder.get_variable('pic0scaling_variable').get())
-        except:
+            value = float(
+                self.builder.get_variable('pic0scaling_variable').get()
+            )
+        except ValueError:
             return
 
-        if v > 0.1 and v != self.pic0scaling and self.disc_ids:
-            self.pic0scaling = v
+        if value > 0.1 and value != self.pic0scaling and self.disc_ids:
+            self.pic0scaling = value
             self._mark_advanced_override('pic0_scaling')
             self.update_preview()
 
     def on_pic0_xoffset(self, event):
         try:
-            v = float(self.builder.get_variable('pic0xoffset_variable').get())
-        except:
+            value = float(
+                self.builder.get_variable('pic0xoffset_variable').get()
+            )
+        except ValueError:
             return
 
-        if v != self.pic0xoffset and self.disc_ids:
-            self.pic0xoffset = v
+        if value != self.pic0xoffset and self.disc_ids:
+            self.pic0xoffset = value
             self._mark_advanced_override('pic0_xoffset')
             self.update_preview()
             
     def on_pic0_yoffset(self, event):
         try:
-            v = float(self.builder.get_variable('pic0yoffset_variable').get())
-        except:
+            value = float(
+                self.builder.get_variable('pic0yoffset_variable').get()
+            )
+        except ValueError:
             return
 
-        if v != self.pic0yoffset and self.disc_ids:
-            self.pic0yoffset = v
+        if value != self.pic0yoffset and self.disc_ids:
+            self.pic0yoffset = value
             self._mark_advanced_override('pic0_yoffset')
             self.update_preview()
             
-    def on_dir_changed(self, event):
-        self.pkgdir = event.widget.cget('path')
-        self.update_prefs()
-
     def _build_conversion_request(self, plan):
         output_dir = self.builder.get_variable('pkgdir_variable').get()
         if not output_dir:
@@ -1245,14 +1280,14 @@ class PspApp(DesktopAppMixin):
             title=self.builder.get_variable('title_variable').get(),
             disc_ids=tuple(
                 self.builder.get_variable(
-                    'discid%d_variable' % (idx + 1)
+                    f'discid{index + 1}_variable'
                 ).get()
-                for idx in range(len(self.cue_files))
+                for index in range(len(self.cue_files))
             ),
             real_disc_ids=tuple(self.real_disc_ids),
             cue_files=tuple(self.cue_files),
             real_cue_files=tuple(self.real_cue_files),
-            image_files=tuple(self.img_files),
+            image_files=tuple(self.image_files),
             sbi_files=tuple(
                 str(selection.path) if selection is not None else None
                 for selection in self.sbi_selections
@@ -1306,6 +1341,46 @@ class PspApp(DesktopAppMixin):
             logo = request.pic1
         return sound, manual, logo
 
+    def _build_eboot_expectation(
+        self,
+        request,
+        working_cues,
+        working_images,
+        subchannels,
+    ):
+        expected_configs = read_planned_configs(
+            request.plan,
+            force_ntsc=request.force_ntsc,
+            cdda=request.use_cdda,
+        )
+        return EbootExpectation(
+            disc_ids=request.disc_ids,
+            decoded_sizes=execution_decoded_sizes(
+                request.plan,
+                use_cdda=request.use_cdda,
+            ),
+            decoded_sha256=expected_decoded_hashes(
+                request.plan,
+                working_images,
+                use_cdda=request.use_cdda,
+            ),
+            tocs=tuple(
+                bytes(popfe.get_toc_from_cue(cue)).ljust(1020, b'\x00')
+                for cue in working_cues
+            ),
+            configs=expected_configs,
+            subchannel_records=tuple(
+                len(data) // 12 if data is not None else 0
+                for data in subchannels
+            ),
+            subchannel_sha256=tuple(
+                hashlib.sha256(data).hexdigest()
+                if data is not None
+                else None
+                for data in subchannels
+            ),
+        )
+
     def _prepare_psp_conversion(self, request, set_phase):
         sound, manual, logo = self._prepare_psp_assets(request, set_phase)
         set_phase('Applying compatibility fixes...')
@@ -1332,38 +1407,11 @@ class PspApp(DesktopAppMixin):
             force_ntsc=False,
             cdda=False,
         )
-        expected_configs = read_planned_configs(
-            request.plan,
-            force_ntsc=request.force_ntsc,
-            cdda=request.use_cdda,
-        )
-        expected_sizes = execution_decoded_sizes(
-            request.plan,
-            use_cdda=request.use_cdda,
-        )
-        expected_hashes = expected_decoded_hashes(
-            request.plan,
+        expectation = self._build_eboot_expectation(
+            request,
+            working_cues,
             working_images,
-            use_cdda=request.use_cdda,
-        )
-        expected_tocs = tuple(
-            bytes(popfe.get_toc_from_cue(cue)).ljust(1020, b'\x00')
-            for cue in working_cues
-        )
-        expectation = EbootExpectation(
-            disc_ids=request.disc_ids,
-            decoded_sizes=expected_sizes,
-            decoded_sha256=expected_hashes,
-            tocs=expected_tocs,
-            configs=expected_configs,
-            subchannel_records=tuple(
-                len(data) // 12 if data is not None else 0
-                for data in subchannels
-            ),
-            subchannel_sha256=tuple(
-                hashlib.sha256(data).hexdigest() if data is not None else None
-                for data in subchannels
-            ),
+            subchannels,
         )
         return PreparedPspConversion(
             cue_files=tuple(working_cues),

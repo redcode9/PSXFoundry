@@ -2,16 +2,20 @@ import tempfile
 import unittest
 import xml.etree.ElementTree as ET
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from PIL import Image
 
 from popfe_runtime import RuntimePaths
 from psxfoundry.gui import (
     confirm_conversion_without_fix,
+    import_disc_image,
     label_path_chooser,
+    load_background_image,
     load_dropped_image,
     load_theme_image,
+    read_preferences,
+    write_preferences,
     write_exception_log,
 )
 from psxfoundry.registry import CompatibilityAssetError
@@ -21,6 +25,56 @@ REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 
 
 class GuiPathTests(unittest.TestCase):
+    def test_preferences_round_trip_values_with_colons(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'settings.conf'
+            write_preferences(
+                path,
+                [('target', 'PSP'), ('path', 'C:\\Games\\PS1')],
+            )
+
+            self.assertEqual(
+                read_preferences(path),
+                {'target': 'PSP', 'path': 'C:\\Games\\PS1'},
+            )
+
+    def test_disc_import_uses_a_disc_specific_scan_path(self):
+        popfe = Mock()
+        popfe.process_disk_file.return_value = (
+            'disc.cue',
+            'original.cue',
+            'disc.bin',
+        )
+        popfe.get_disc_id.return_value = ('SCES-00001', 'unused hash')
+        temporary_paths = []
+        disc = import_disc_image(
+            popfe,
+            '/games/disc.cue',
+            2,
+            temporary_paths,
+            '/work',
+            is_psp=True,
+        )
+
+        self.assertEqual(disc.cue_file, 'disc.cue')
+        self.assertEqual(disc.original_cue_file, 'original.cue')
+        self.assertEqual(disc.image_file, 'disc.bin')
+        self.assertEqual(disc.disc_id, 'SCES-00001')
+        popfe.process_disk_file.assert_called_once_with(
+            '/games/disc.cue',
+            2,
+            temporary_paths,
+            subdir='/work',
+        )
+        scan_path = str(Path('/work') / 'TMP02.iso')
+        popfe.get_disc_id.assert_called_once_with(
+            'disc.cue',
+            'original.cue',
+            scan_path,
+            is_psp=True,
+        )
+        self.assertEqual(temporary_paths, [scan_path])
+
     def test_path_chooser_uses_a_text_label(self):
         class Button:
             def configure(self, **options):
@@ -54,6 +108,26 @@ class GuiPathTests(unittest.TestCase):
 
         self.assertEqual(image, "image")
         self.assertEqual(requested, ["PIC0.PNG"])
+
+    def test_background_artwork_uses_theme_before_game_data(self):
+        popfe = Mock()
+        popfe.get_image_from_theme.side_effect = (
+            lambda _theme, _disc_id, _work_dir, filename: (
+                'theme image' if filename == 'PIC1.PNG' else None
+            )
+        )
+        image = load_background_image(
+            popfe,
+            None,
+            'theme',
+            'SCES-00001',
+            '/work',
+            {},
+            'disc.cue',
+        )
+
+        self.assertEqual(image, 'theme image')
+        popfe.get_pic1_from_game.assert_not_called()
 
     def test_gui_sources_do_not_write_relative_preferences_or_theme_files(self):
         for filename in ("pop-fe-psp.py", "pop-fe-ps3.py"):

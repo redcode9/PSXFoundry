@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 import io
 from pathlib import Path
 import queue
 import re
+import shutil
 import sys
 import threading
 import tkinter as tk
@@ -17,6 +19,14 @@ from PIL import Image
 
 from popfe_runtime import RuntimePaths
 from psxfoundry.registry import CompatibilityAssetError
+
+
+@dataclass(frozen=True)
+class ImportedDisc:
+    cue_file: str
+    original_cue_file: str
+    image_file: str
+    disc_id: str
 
 
 class CompletionDialog(tk.Toplevel):
@@ -129,6 +139,54 @@ class ConversionTask:
 
 
 class DesktopAppMixin:
+    def _reset_imported_discs(self):
+        self.cue_file_orig = None
+        self.cue_files = []
+        self.real_cue_files = []
+        self.image_files = []
+        self.disc_ids = []
+        self.real_disc_ids = []
+
+    def _record_imported_disc(self, disc):
+        self.cue_file_orig = disc.original_cue_file
+        self.cue_files.append(disc.cue_file)
+        self.real_cue_files.append(disc.original_cue_file)
+        self.image_files.append(disc.image_file)
+        self.disc_ids.append(disc.disc_id)
+        self.real_disc_ids.append(disc.disc_id)
+
+    def _reset_artwork(self):
+        for name in (
+            'icon0',
+            'icon0_tk',
+            'pic0',
+            'pic0_orig',
+            'pic0_path',
+            'pic0_tk',
+            'pic1',
+            'pic1_path',
+            'pic1_tk',
+            'preview_tk',
+        ):
+            setattr(self, name, None)
+        self.manual = None
+
+    def _set_controls_state(self, state, *object_ids):
+        for object_id in object_ids:
+            self.builder.get_object(
+                object_id, self.master
+            ).configure(state=state)
+
+    def _clear_variables(self, *variable_names):
+        for variable_name in variable_names:
+            self.builder.get_variable(variable_name).set('')
+
+    def _set_disc_initial_directory(self, directory, disc_count=5):
+        for disc_number in range(1, disc_count + 1):
+            self.builder.get_object(
+                f'disc{disc_number}', self.master
+            ).configure(initialdir=directory)
+
     def on_reset(self):
         self.init_data()
 
@@ -156,6 +214,27 @@ class DesktopAppMixin:
         )
         setattr(self, name + '_tk', preview)
 
+    def _load_background_artwork(
+        self, popfe, temporary_paths, disc_id, game
+    ):
+        self.pic1 = load_background_image(
+            popfe,
+            self.pic1_path,
+            self._theme,
+            disc_id,
+            self.subdir,
+            game,
+            self.cue_file_orig,
+        )
+        if self.pic1:
+            self._render_artwork_preview(
+                'pic1', (128, 80), temporary_paths
+            )
+
+    def on_dir_changed(self, event):
+        self.pkgdir = event.widget.cget('path')
+        self.update_prefs()
+
     def _refresh_conversion_plan_with_prompt(self):
         return build_plan_with_missing_fix_prompt(
             self.master, self._refresh_conversion_plan
@@ -176,6 +255,61 @@ def clear_temporary_paths(paths, *, verbose=False):
                 pass
         except FileNotFoundError:
             pass
+
+
+def reset_work_directory(work_dir, temporary_paths):
+    clear_temporary_paths(temporary_paths)
+    temporary_paths.clear()
+    shutil.rmtree(work_dir, ignore_errors=True)
+    Path(work_dir).mkdir(parents=True)
+    temporary_paths.append(str(work_dir))
+
+
+def read_preferences(path):
+    with Path(path).open('r', encoding='utf-8') as preferences_file:
+        return dict(
+            line.split(':', 1)
+            for line in preferences_file.read().splitlines()
+        )
+
+
+def write_preferences(path, values):
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open('w', encoding='utf-8') as preferences_file:
+        for key, value in values:
+            preferences_file.write(f'{key}:{value}\n')
+
+
+def import_disc_image(
+    popfe,
+    source_path,
+    disc_number,
+    temporary_paths,
+    work_dir,
+    *,
+    is_psp=False,
+):
+    cue_file, original_cue_file, image_file = popfe.process_disk_file(
+        source_path,
+        disc_number,
+        temporary_paths,
+        subdir=work_dir,
+    )
+    scan_path = str(Path(work_dir) / f'TMP{disc_number:02}.iso')
+    disc_id, _ = popfe.get_disc_id(
+        cue_file,
+        original_cue_file,
+        scan_path,
+        is_psp=is_psp,
+    )
+    temporary_paths.append(scan_path)
+    return ImportedDisc(
+        cue_file=cue_file,
+        original_cue_file=original_cue_file,
+        image_file=image_file,
+        disc_id=disc_id,
+    )
 
 
 def label_path_chooser(chooser, text="Choose..."):
@@ -200,6 +334,30 @@ def load_theme_image(loader, theme, disc_id, work_dir, name):
     return loader(theme, disc_id, work_dir, f'{name}.PNG') or loader(
         theme, disc_id, work_dir, f'{name}.png'
     )
+
+
+def load_background_image(
+    popfe,
+    image_path,
+    theme,
+    disc_id,
+    work_dir,
+    game,
+    cue_file,
+):
+    if image_path:
+        return Image.open(image_path)
+    if theme:
+        image = load_theme_image(
+            popfe.get_image_from_theme,
+            theme,
+            disc_id,
+            work_dir,
+            'PIC1',
+        )
+        if image:
+            return image
+    return popfe.get_pic1_from_game(disc_id, game, cue_file)
 
 
 def load_dropped_image(value, fetch):

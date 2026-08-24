@@ -6,7 +6,6 @@ import os
 import pygubu
 import pygubu.widgets.simpletooltip as tooltip
 import requests
-import shutil
 import tkinter as tk
 from tkinterdnd2 import DND_FILES, TkinterDnD
 from pathlib import Path
@@ -16,11 +15,15 @@ from psxfoundry.gui import (
     ConversionTask,
     choose_image,
     clear_temporary_paths,
+    import_disc_image,
     install_tk_error_handler,
     label_path_chooser,
     load_dropped_image,
     load_theme_image,
+    read_preferences,
+    reset_work_directory,
     show_conversion_error,
+    write_preferences,
 )
 from popfe_runtime import runtime as popfe_runtime
 from psxfoundry.cache import AnalysisCache
@@ -35,8 +38,8 @@ have_pytube = False
 try:
     import pytubefix as pytube
     have_pytube = True
-except:
-    True
+except ImportError:
+    pass
 
 from PIL import Image, ImageDraw
 import importlib
@@ -44,7 +47,7 @@ from gamedb import games, themes
 from layout import image_has_transparency
 try:
     import popfe
-except:
+except ImportError:
     popfe = importlib.import_module("pop-fe")
 
 verbose = False
@@ -88,30 +91,11 @@ class Ps3App(DesktopAppMixin):
 
     def __init__(self, master=None):
         self.myrect = None
-        self.cue_file_orig = None
-        self.cue_files = None
-        self.real_cue_files = None
-        self.img_files = None
-        self.disc_ids = None
-        self.md5_sums = None
-        self.real_disc_ids = None
-        self.icon0 = None
-        self.icon0_tk = None
-        self.pic0 = None
-        self.pic0_orig = None
-        self.pic0_path = None
-        self.pic0_tk = None
-        self.pic1 = None
-        self.pic1_path = None
-        self.pic1_tk = None
-        self.back = None
-        self.disc = None
         self.pic0_disabled = 'off'
         self.pic1_bc = 'off'
         self.pic1_disabled = 'off'
         self.snd0_disabled = 'off'
         self.icon0_disc = 'off'
-        self.preview_tk = None
         self.pkgdir = None
         self.data_track_only = 'off'
         self.subdir = str(
@@ -120,7 +104,6 @@ class Ps3App(DesktopAppMixin):
         self.pic0scaling = 0.9
         self.pic0xoffset = 0.1
         self.pic0yoffset = 0.1
-        self.manual = None
         self.conversion_plan = None
         self.conversion_task = None
         self.advanced_visible = False
@@ -144,15 +127,15 @@ class Ps3App(DesktopAppMixin):
         self._configure_drop_targets()
         self._configure_tooltips()
         self._theme = ''
-        o = ['']
-        for theme in themes:
-            o.append(theme)
-        self.builder.get_object('theme', self.master).configure(values=o)
+        theme_names = ('', *themes)
+        self.builder.get_object('theme', self.master).configure(
+            values=theme_names
+        )
         self.init_data()
         try:
             self.read_prefs()
-        except:
-            True
+        except (OSError, ValueError):
+            pass
 
     def _configure_drop_targets(self):
         targets = (
@@ -187,8 +170,8 @@ class Ps3App(DesktopAppMixin):
             )
 
     def __del__(self):
-        global temp_files
         clear_temporary_paths(temp_files, verbose=verbose)
+        temp_files.clear()
 
     def _configure_layout(self):
         self.mainwindow.columnconfigure(0, weight=1, uniform='content')
@@ -258,102 +241,92 @@ class Ps3App(DesktopAppMixin):
             panel.grid()
             button.configure(text='Hide advanced settings')
         self.advanced_visible = not self.advanced_visible
-        temp_files = []
 
     def update_prefs(self):
-        PREFERENCES_PATH.parent.mkdir(parents=True, exist_ok=True)
-        with open(PREFERENCES_PATH, "w") as f:
-            f.write('%s:%s\n' % ('newemu', self.builder.get_variable('force_newemu_variable').get()))
-            f.write('%s:%s\n' % ('swap', self.builder.get_variable('allow_discswap_variable').get()))
-            f.write('%s:%s\n' % ('ntsc', self.builder.get_variable('force_ntsc_variable').get()))
-            f.write('%s:%s\n' % ('undither', self.builder.get_variable('psx_undither_variable').get()))
-            f.write('%s:%s\n' % ('pkgdir', self.builder.get_variable('pkgdir_variable').get()))
-            if self.path_dir:
-                f.write('%s:%s\n' % ('path', self.path_dir))
-
+        preferences = [
+            ('newemu', self.builder.get_variable('force_newemu_variable').get()),
+            ('swap', self.builder.get_variable('allow_discswap_variable').get()),
+            ('ntsc', self.builder.get_variable('force_ntsc_variable').get()),
+            (
+                'undither',
+                self.builder.get_variable('psx_undither_variable').get(),
+            ),
+            ('pkgdir', self.builder.get_variable('pkgdir_variable').get()),
+        ]
+        if self.path_dir:
+            preferences.append(('path', self.path_dir))
+        write_preferences(PREFERENCES_PATH, preferences)
 
     def read_prefs(self):
-        with open(PREFERENCES_PATH, "r") as f:
-            for x in f.read().splitlines():
-                key, val = x.split(':', 1)
-                if key == 'newemu':
-                    self.builder.get_variable('force_newemu_variable').set(val)
-                if key == 'swap':
-                    self.builder.get_variable('allow_discswap_variable').set(val)
-                if key == 'ntsc':
-                    self.builder.get_variable('force_ntsc_variable').set(val)
-                if key == 'undither':
-                    self.builder.get_variable('psx_undither_variable').set(val)
-                if key == 'pkgdir':
-                    self.builder.get_variable('pkgdir_variable').set(val)
-                if key == 'path':
-                    self.path_dir = val
-                    if self.path_dir:
-                        self.builder.get_object('disc1', self.master).config(initialdir=self.path_dir)
-                        self.builder.get_object('disc2', self.master).config(initialdir=self.path_dir)
-                        self.builder.get_object('disc3', self.master).config(initialdir=self.path_dir)
-                        self.builder.get_object('disc4', self.master).config(initialdir=self.path_dir)
-                        self.builder.get_object('disc5', self.master).config(initialdir=self.path_dir)
+        preferences = read_preferences(PREFERENCES_PATH)
+        variables = {
+            'newemu': 'force_newemu_variable',
+            'swap': 'allow_discswap_variable',
+            'ntsc': 'force_ntsc_variable',
+            'undither': 'psx_undither_variable',
+            'pkgdir': 'pkgdir_variable',
+        }
+        for key, variable_name in variables.items():
+            if key in preferences:
+                self.builder.get_variable(variable_name).set(preferences[key])
+
+        self.path_dir = preferences.get('path', self.path_dir)
+        if self.path_dir:
+            self._set_disc_initial_directory(self.path_dir)
 
                 
     def init_data(self):
-        global temp_files
-        if temp_files:
-            for f in temp_files:
-                try:
-                    os.unlink(f)
-                except:
-                    try:
-                        os.rmdir(f)
-                    except:
-                        True
+        reset_work_directory(self.subdir, temp_files)
 
-        temp_files = []  
-        temp_files.append(self.subdir)
-        shutil.rmtree(self.subdir, ignore_errors=True)
-        os.mkdir(self.subdir)
-
-        self.cue_files = []
-        self.real_cue_files = []
-        self.img_files = []
-        self.disc_ids = []
-        self.md5_sums = []
-        self.real_disc_ids = []
-        self.icon0 = None
-        self.icon0_tk = None
-        self.pic0 = None
-        self.pic0_orig = None
-        self.pic0_path = None
-        self.pic0_tk = None
-        self.pic1 = None
-        self.pic1_path = None
-        self.pic1_tk = None
+        self._reset_imported_discs()
+        self._reset_artwork()
         self.back = None
         self.disc = None
-        self.preview_tk = None
-        self.manual = None
-            
-        for idx in range(1,6):
-            self.builder.get_object('discid%d' % (idx), self.master).config(state='disabled')
-            self.builder.get_object('disc' + str(idx), self.master).config(filetypes=[('Image files', ['.cue', '.ccd', '.img', '.zip', '.chd']), ('All Files', ['*.*', '*'])])
-            self.builder.get_variable('disc%d_variable' % (idx)).set('')
-            self.builder.get_variable('discid%d_variable' % (idx)).set('')
-            self.builder.get_object('disc' + str(idx), self.master).config(state='disabled')
-        self.builder.get_object('disc1', self.master).config(state='normal')
-        self.builder.get_object('create_button', self.master).config(state='disabled')
-        self.builder.get_object('youtube_button', self.master).config(state='disabled')
-        self.builder.get_object('pic0scaling', self.master).config(state='disabled')
-        self.builder.get_object('pic0xoffset', self.master).config(state='disabled')
-        self.builder.get_object('pic0yoffset', self.master).config(state='disabled')
-        self.builder.get_variable('title_variable').set('')
-        self.builder.get_object('snd0', self.master).config(filetypes=[('Audio files', ['.wav']), ('All Files', ['*.*', '*'])])
-        self.builder.get_variable('snd0_variable').set('')
-        self.builder.get_object('manual', self.master).config(state='disabled')
-        self.builder.get_object('manual', self.master).config(filetypes=[('All Files', ['*.*', '*'])])
-        self.builder.get_variable('manual_variable').set('')
-        self.builder.get_variable('pic0scaling_variable').set('')
-        self.builder.get_variable('pic0xoffset_variable').set('')
-        self.builder.get_variable('pic0yoffset_variable').set('')
+        for disc_number in range(1, 6):
+            self.builder.get_object(
+                f'disc{disc_number}', self.master
+            ).configure(
+                filetypes=[
+                    ('Image files', ['.cue', '.ccd', '.img', '.iso', '.zip', '.chd']),
+                    ('All Files', ['*.*', '*']),
+                ],
+                state='disabled',
+            )
+            self._set_controls_state(
+                'disabled', f'discid{disc_number}'
+            )
+            self._clear_variables(
+                f'disc{disc_number}_variable',
+                f'discid{disc_number}_variable',
+            )
+        self._set_controls_state('normal', 'disc1')
+        self._set_controls_state(
+            'disabled',
+            'create_button',
+            'youtube_button',
+            'pic0scaling',
+            'pic0xoffset',
+            'pic0yoffset',
+            'manual',
+        )
+        self._clear_variables(
+            'title_variable',
+            'snd0_variable',
+            'manual_variable',
+            'pic0scaling_variable',
+            'pic0xoffset_variable',
+            'pic0yoffset_variable',
+        )
+        self.conversion_plan = None
+        self.builder.get_object('snd0', self.master).configure(
+            filetypes=[
+                ('Audio files', ['.wav']),
+                ('All Files', ['*.*', '*']),
+            ]
+        )
+        self.builder.get_object('manual', self.master).configure(
+            filetypes=[('All Files', ['*.*', '*'])]
+        )
 
     def _refresh_conversion_plan(self, allow_missing_fixes=False):
         if not self.cue_files:
@@ -369,8 +342,12 @@ class Ps3App(DesktopAppMixin):
             allow_missing_fixes=allow_missing_fixes,
         )
         self.conversion_plan = plan
-        for idx, planned_id in enumerate(plan.output_disc_ids, start=1):
-            self.builder.get_variable('discid%d_variable' % idx).set(planned_id)
+        for disc_number, planned_id in enumerate(
+            plan.output_disc_ids, start=1
+        ):
+            self.builder.get_variable(
+                f'discid{disc_number}_variable'
+            ).set(planned_id)
         self.builder.get_variable('force_ntsc_variable').set(
             'on' if plan.force_ntsc else 'off'
         )
@@ -383,51 +360,67 @@ class Ps3App(DesktopAppMixin):
         if self.pic0_orig and self.pic0.mode == 'P':
             self.pic0_orig = self.pic0.convert(mode='RGBA')
 
-        c = self.builder.get_object('preview_canvas', self.master)
         if not self.pic1 or self.pic1_disabled == 'on':
-            p1 = Image.new("RGBA", (382,216), (255,255,255,0))
+            preview = Image.new('RGBA', (382, 216), (255, 255, 255, 0))
         else:
-            if self.pic1_bc == 'off':
-                p1 = self.pic1.resize((382,216), Image.Resampling.HAMMING)
-            else:
-                p1 = self.back.resize((382,216), Image.Resampling.HAMMING)
-        p1 = p1.convert('RGBA')
-        
-        if self.pic0_disabled == 'on':
-            _pic0 = None
-        else:
-            _pic0 = popfe.rescale_pic0(self.pic0_orig, popfe.get_pic0_scaling(self.disc_ids[0]), popfe.get_pic0_offset(self.disc_ids[0]))
-        if _pic0:
-            p0 = _pic0.resize((int(p1.size[0] * 0.55) , int(p1.size[1] * 0.58)), Image.Resampling.HAMMING)
-            if image_has_transparency(p0):
-                Image.Image.paste(p1, p0, box=(148,79), mask=p0)
-            else:
-                Image.Image.paste(p1, p0, box=(148,79))
-        i0 = None
-        if self.icon0 and self.icon0_disc == 'off':
-                i0 = self.icon0.resize((int(p1.size[0] * 0.10) , int(p1.size[0] * 0.10)), Image.Resampling.HAMMING)
-        if self.disc and self.icon0_disc == 'on':
-                i0 = self.disc.resize((int(p1.size[0] * 0.10) , int(p1.size[0] * 0.10)), Image.Resampling.HAMMING)
-        if i0:
-            if image_has_transparency(i0):
-                Image.Image.paste(p1, i0, box=(100,79), mask=i0)
-            else:
-                Image.Image.paste(p1, i0, box=(100,79))
-        temp_files.append(self.subdir + 'PREVIEW.PNG')
-        p1.save(self.subdir + 'PREVIEW.PNG')
-        self.preview_tk = tk.PhotoImage(file = self.subdir + 'PREVIEW.PNG')
-        c = self.builder.get_object('preview_canvas', self.master)
-        c.create_image(0, 0, image=self.preview_tk, anchor='nw')
+            background = self.pic1 if self.pic1_bc == 'off' else self.back
+            preview = background.resize(
+                (382, 216), Image.Resampling.HAMMING
+            )
+        preview = preview.convert('RGBA')
 
-    def fetch_pic0(self):
-        disc_id = self.disc_ids[0]
-        game = popfe.get_game_from_gamelist(disc_id)
-        
+        if self.pic0_disabled == 'on':
+            logo = None
+        else:
+            logo = popfe.rescale_pic0(
+                self.pic0_orig,
+                self.pic0scaling,
+                (self.pic0xoffset, self.pic0yoffset),
+            )
+        if logo:
+            logo = logo.resize(
+                (
+                    int(preview.size[0] * 0.55),
+                    int(preview.size[1] * 0.58),
+                ),
+                Image.Resampling.HAMMING,
+            )
+            preview.paste(
+                logo,
+                (148, 79),
+                logo if image_has_transparency(logo) else None,
+            )
+
+        icon = None
+        if self.icon0 and self.icon0_disc == 'off':
+            icon = self.icon0
+        elif self.disc and self.icon0_disc == 'on':
+            icon = self.disc
+        if icon:
+            icon_size = int(preview.size[0] * 0.10)
+            icon = icon.resize(
+                (icon_size, icon_size), Image.Resampling.HAMMING
+            )
+            preview.paste(
+                icon,
+                (100, 79),
+                icon if image_has_transparency(icon) else None,
+            )
+
+        preview_path = self.subdir + 'PREVIEW.PNG'
+        temp_files.append(preview_path)
+        preview.save(preview_path)
+        self.preview_tk = tk.PhotoImage(file=preview_path)
+        canvas = self.builder.get_object('preview_canvas', self.master)
+        canvas.delete('all')
+        canvas.create_image(0, 0, image=self.preview_tk, anchor='nw')
+
+    def _load_logo_artwork(self, disc_id, game):
         self.pic0 = None
         if self.pic0_path:
             self.pic0 = Image.open(self.pic0_path)
-            self.pic0_orig = Image.open(self.pic0_path)
-        if not self.pic0 and self._theme != '':
+            self.pic0_orig = self.pic0.copy()
+        if not self.pic0 and self._theme:
             self.pic0_orig = load_theme_image(
                 popfe.get_image_from_theme,
                 self._theme,
@@ -437,34 +430,39 @@ class Ps3App(DesktopAppMixin):
             )
             self.pic0 = self.pic0_orig
         if not self.pic0:
-            self.pic0_orig = popfe.get_pic0_from_game(disc_id, game, self.cue_file_orig, no_scaling=True)
-            self.pic0 = popfe.rescale_pic0(self.pic0_orig, popfe.get_pic0_scaling(disc_id), popfe.get_pic0_offset(disc_id))
+            self.pic0_orig = popfe.get_pic0_from_game(
+                disc_id,
+                game,
+                self.cue_file_orig,
+                no_scaling=True,
+            )
+            self.pic0 = popfe.rescale_pic0(
+                self.pic0_orig,
+                self.pic0scaling,
+                (self.pic0xoffset, self.pic0yoffset),
+            )
         if self.pic0:
             self._render_artwork_preview('pic0', (128, 80), temp_files)
-        
-    def update_assets(self):
-        if not self.disc_ids:
+
+    def _load_preview_audio(self, disc_id):
+        if self.snd0_disabled != 'off':
             return
-        if not self.cue_file_orig:
-            return
-        disc_id = self.disc_ids[0]
-        game = popfe.get_game_from_gamelist(disc_id)
-        if self.snd0_disabled == 'off':
-            snd0 = None
-            print('Fetching SND0') if verbose else None
-            if self._theme != '':
-                snd0 = popfe.get_snd0_from_theme(self._theme, disc_id, self.subdir)
-                if snd0:
-                    temp_files.append(snd0)
-            if not snd0 and disc_id in games and 'snd0' in games[disc_id]:
-                snd0 = games[disc_id]['snd0']
-            if snd0:
-                self.builder.get_variable('snd0_variable').set(snd0)
-                
-        print('Fetching ICON0') if verbose else None
+
+        audio_path = None
+        if self._theme:
+            audio_path = popfe.get_snd0_from_theme(
+                self._theme, disc_id, self.subdir
+            )
+            if audio_path:
+                temp_files.append(audio_path)
+        if not audio_path:
+            audio_path = games.get(disc_id, {}).get('snd0')
+        if audio_path:
+            self.builder.get_variable('snd0_variable').set(audio_path)
+
+    def _load_icon_artwork(self, disc_id, game):
         self.icon0 = None
-        if self._theme != '':
-            print('Get icon0 from theme')
+        if self._theme:
             self.icon0 = load_theme_image(
                 popfe.get_image_from_theme,
                 self._theme,
@@ -475,33 +473,37 @@ class Ps3App(DesktopAppMixin):
             if self.icon0:
                 self.icon0 = self.icon0.crop(self.icon0.getbbox())
         if not self.icon0:
-            self.icon0 = popfe.get_icon0_from_game(disc_id, game, self.cue_file_orig, self.subdir + 'ICON0.PNG', psn_frame_size=((176,176),(138,138)))
-            
+            self.icon0 = popfe.get_icon0_from_game(
+                disc_id,
+                game,
+                self.cue_file_orig,
+                self.subdir + 'ICON0.PNG',
+                psn_frame_size=((176, 176), (138, 138)),
+            )
         if self.icon0:
             self._render_artwork_preview('icon0', (80, 80), temp_files)
-            
-        print('Fetching PIC0') if verbose else None
-        self.fetch_pic0()
-        
-        print('Fetching PIC1') if verbose else None
-        self.pic1 = None
-        if self.pic1_path:
-            self.pic1 = Image.open(self.pic1_path)
-        if not self.pic1 and self._theme != '':
-            self.pic1 = load_theme_image(
-                popfe.get_image_from_theme,
-                self._theme,
-                disc_id,
-                self.subdir,
-                'PIC1',
-            )
-        if not self.pic1:
-            self.pic1 = popfe.get_pic1_from_game(disc_id, game, self.cue_file_orig)
-        if self.pic1:
-            self._render_artwork_preview('pic1', (128, 80), temp_files)
 
+    def update_assets(self):
+        if not self.disc_ids or not self.cue_file_orig:
+            return
+
+        disc_id = self.disc_ids[0]
+        game = popfe.get_game_from_gamelist(disc_id)
+        if self.snd0_disabled == 'off':
+            if verbose:
+                print('Fetching SND0')
+            self._load_preview_audio(disc_id)
+        if verbose:
+            print('Fetching ICON0')
+        self._load_icon_artwork(disc_id, game)
+        if verbose:
+            print('Fetching PIC0')
+        self._load_logo_artwork(disc_id, game)
+        if verbose:
+            print('Fetching PIC1')
+        self._load_background_artwork(popfe, temp_files, disc_id, game)
         self.update_preview()
-        
+
     def on_path_changed(self, event):
         source_path = event.widget.cget('path')
         if not source_path:
@@ -513,35 +515,30 @@ class Ps3App(DesktopAppMixin):
         self.master.update()
         try:
             disc_number = int(event.widget.cget('title')[1])
-            print('Processing', source_path) if verbose else None
-            cue_file, real_cue_file, image_file = popfe.process_disk_file(
-                source_path, disc_number, temp_files, subdir=self.subdir
+            if verbose:
+                print('Processing', source_path)
+            disc = import_disc_image(
+                popfe,
+                source_path,
+                disc_number,
+                temp_files,
+                self.subdir,
             )
-            temporary_iso = self.subdir + 'TMP01.iso'
-            disc_id, md5_sum = popfe.get_disc_id(
-                cue_file, real_cue_file, temporary_iso
-            )
-
-            self.cue_file_orig = real_cue_file
-            self.img_files.append(image_file)
-            self.disc_ids.append(disc_id)
-            self.md5_sums.append(md5_sum)
-            self.real_disc_ids.append(disc_id)
-            self.cue_files.append(cue_file)
-            self.real_cue_files.append(real_cue_file)
+            self._record_imported_disc(disc)
             self.builder.get_variable(
                 f'discid{disc_number}_variable'
-            ).set(disc_id)
+            ).set(disc.disc_id)
 
-            game = games.get(disc_id, {})
+            game = games.get(disc.disc_id, {})
             if 'manual' in game:
-                print('Found a MANUAL for', disc_id)
+                print('Found a MANUAL for', disc.disc_id)
                 self.manual = game['manual']
             self._advance_disc_input(disc_number)
             if disc_number == 1:
-                self._configure_first_disc(disc_id, game)
+                self._configure_first_disc(disc.disc_id, game)
             self._refresh_conversion_plan_with_prompt()
-            print('Finished processing disc') if verbose else None
+            if verbose:
+                print('Finished processing disc')
         finally:
             self.master.config(cursor='')
 
@@ -571,9 +568,10 @@ class Ps3App(DesktopAppMixin):
             'pic0yoffset_variable': self.pic0yoffset,
             'manual_variable': self.manual,
         }
-        for variable, value in values.items():
-            self.builder.get_variable(variable).set(value)
-        for object_id in (
+        for variable_name, value in values.items():
+            self.builder.get_variable(variable_name).set(value)
+        self._set_controls_state(
+            'normal',
             'create_button',
             'youtube_button',
             'disable_pic0',
@@ -583,30 +581,19 @@ class Ps3App(DesktopAppMixin):
             'pic0xoffset',
             'pic0yoffset',
             'manual',
-        ):
-            self.builder.get_object(
-                object_id, self.master
-            ).configure(state='normal')
+        )
         self.update_assets()
 
 
     def on_icon0_dropped(self, event):
-        self.master.config(cursor='watch')
-        self.master.update()
-        image = load_dropped_image(event.data, requests.get)
-        self.master.config(cursor='')
-        self._set_artwork_image('icon0', image)
+        self._load_dropped_artwork(event.data, 'icon0')
         
     def on_icon0_clicked(self, event):
         _, image = choose_image(self.master, 'Select image for ICON0')
         self._set_artwork_image('icon0', image)
 
     def on_pic0_dropped(self, event):
-        self.master.config(cursor='watch')
-        self.master.update()
-        image = load_dropped_image(event.data, requests.get)
-        self.master.config(cursor='')
-        self._set_artwork_image('pic0', image)
+        self._load_dropped_artwork(event.data, 'pic0')
         
     def on_pic0_clicked(self, event):
         path, image = choose_image(self.master, 'Select image for PIC0')
@@ -614,11 +601,7 @@ class Ps3App(DesktopAppMixin):
         self._set_artwork_image('pic0', image)
 
     def on_pic1_dropped(self, event):
-        self.master.config(cursor='watch')
-        self.master.update()
-        image = load_dropped_image(event.data, requests.get)
-        self.master.config(cursor='')
-        self._set_artwork_image('pic1', image)
+        self._load_dropped_artwork(event.data, 'pic1')
         
     def on_pic1_clicked(self, event):
         _, image = choose_image(self.master, 'Select image for PIC1')
@@ -634,6 +617,15 @@ class Ps3App(DesktopAppMixin):
         self._render_artwork_preview(name, size, temp_files)
         self.update_preview()
 
+    def _load_dropped_artwork(self, value, name):
+        self.master.configure(cursor='watch')
+        self.master.update()
+        try:
+            image = load_dropped_image(value, requests.get)
+        finally:
+            self.master.configure(cursor='')
+        self._set_artwork_image(name, image)
+
     def on_force_ntsc(self):
         self.update_prefs()
         
@@ -647,48 +639,72 @@ class Ps3App(DesktopAppMixin):
         self.update_prefs()
         
     def on_data_track_only(self):
-        self.data_track_only = self.builder.get_variable('data_track_only_variable').get()
+        self.data_track_only = self.builder.get_variable(
+            'data_track_only_variable'
+        ).get()
         self.update_preview()
 
     def on_pic0_disabled(self):
-        self.pic0_disabled = self.builder.get_variable('pic0_disabled_variable').get()
+        self.pic0_disabled = self.builder.get_variable(
+            'pic0_disabled_variable'
+        ).get()
         self.update_preview()
 
     def on_pic1_disabled(self):
-        self.pic1_disabled = self.builder.get_variable('pic1_disabled_variable').get()
+        self.pic1_disabled = self.builder.get_variable(
+            'pic1_disabled_variable'
+        ).get()
         self.update_preview()
 
     def on_snd0_disabled(self):
-        self.snd0_disabled = self.builder.get_variable('snd0_disabled_variable').get()
+        self.snd0_disabled = self.builder.get_variable(
+            'snd0_disabled_variable'
+        ).get()
 
     def on_icon0_from_disc(self):
-        self.icon0_disc = self.builder.get_variable('disc_as_icon0_variable').get()
+        self.icon0_disc = self.builder.get_variable(
+            'disc_as_icon0_variable'
+        ).get()
         if not self.disc and self.disc_ids:
             disc_id = self.disc_ids[0]
             game = popfe.get_game_from_gamelist(disc_id)
-            self.master.config(cursor='watch')
+            self.master.configure(cursor='watch')
             self.master.update()
-            d = popfe.get_icon0_from_disc(disc_id, game, self.cue_files[0], 'DISC.PNG')
-            size = (176,176)
-            d = d.resize(size, Image.Resampling.HAMMING)
-            bigsize = (d.size[0] * 3, d.size[1] * 3)
-            mask = Image.new('L', bigsize, 0)
-            draw = ImageDraw.Draw(mask) 
-            draw.ellipse((0, 0) + bigsize, fill=255)
-            mask = mask.resize(d.size, Image.ANTIALIAS)
-            d.putalpha(mask)
-            self.disc = d
-            self.master.config(cursor='')
+            try:
+                disc_image = popfe.get_icon0_from_disc(
+                    disc_id, game, self.cue_files[0], 'DISC.PNG'
+                )
+                disc_image = disc_image.resize(
+                    (176, 176), Image.Resampling.HAMMING
+                )
+                mask_size = (
+                    disc_image.size[0] * 3,
+                    disc_image.size[1] * 3,
+                )
+                mask = Image.new('L', mask_size, 0)
+                ImageDraw.Draw(mask).ellipse(
+                    (0, 0) + mask_size, fill=255
+                )
+                mask = mask.resize(
+                    disc_image.size, Image.Resampling.LANCZOS
+                )
+                disc_image.putalpha(mask)
+                self.disc = disc_image
+            finally:
+                self.master.configure(cursor='')
 
-        self.builder.get_object('icon0_or_disc', self.master).config(text='COVER' if self.icon0_disc == 'off' else 'DISC')
-        if self.icon0_disc == 'off':
-            self.icon0.resize((80,80), Image.Resampling.HAMMING).save(self.subdir + 'ICON0.PNG')
-        else:
-            self.disc.resize((80,80), Image.Resampling.HAMMING).save(self.subdir + 'ICON0.PNG')
-        self.icon0_tk = tk.PhotoImage(file = self.subdir + 'ICON0.PNG')
-        c = self.builder.get_object('icon0_canvas', self.master)
-        c.create_image(0, 0, image=self.icon0_tk, anchor='nw')
-        
+        use_cover = self.icon0_disc == 'off'
+        self.builder.get_object(
+            'icon0_or_disc', self.master
+        ).configure(text='COVER' if use_cover else 'DISC')
+        icon = self.icon0 if use_cover else self.disc
+        icon_path = self.subdir + 'ICON0.PNG'
+        icon.resize((80, 80), Image.Resampling.HAMMING).save(icon_path)
+        self.icon0_tk = tk.PhotoImage(file=icon_path)
+        canvas = self.builder.get_object('icon0_canvas', self.master)
+        canvas.delete('all')
+        canvas.create_image(0, 0, image=self.icon0_tk, anchor='nw')
+
         self.update_preview()
             
     def on_pic1_from_bc(self):
@@ -696,58 +712,67 @@ class Ps3App(DesktopAppMixin):
         if not self.back and self.disc_ids:
             disc_id = self.disc_ids[0]
             game = popfe.get_game_from_gamelist(disc_id)
-            self.master.config(cursor='watch')
+            self.master.configure(cursor='watch')
             self.master.update()
-            self.back = popfe.get_pic1_from_bc(disc_id, game, self.cue_files[0])
-            self.master.config(cursor='')
-        self.builder.get_object('pic1_or_back', self.master).config(text='PIC1' if self.pic1_bc == 'off' else 'BACK')
-        if self.pic1_bc == 'off':
-            self.pic1.resize((128,80), Image.Resampling.HAMMING).save(self.subdir + 'PIC1.PNG')
-        else:
-            self.back.resize((128,80), Image.Resampling.HAMMING).save(self.subdir + 'PIC1.PNG')
-        self.pic1_tk = tk.PhotoImage(file = self.subdir + 'PIC1.PNG')
-        c = self.builder.get_object('pic1_canvas', self.master)
-        c.create_image(0, 0, image=self.pic1_tk, anchor='nw')
-        
+            try:
+                self.back = popfe.get_pic1_from_bc(
+                    disc_id, game, self.cue_files[0]
+                )
+            finally:
+                self.master.configure(cursor='')
+
+        use_front = self.pic1_bc == 'off'
+        self.builder.get_object(
+            'pic1_or_back', self.master
+        ).configure(text='PIC1' if use_front else 'BACK')
+        background = self.pic1 if use_front else self.back
+        background_path = self.subdir + 'PIC1.PNG'
+        background.resize(
+            (128, 80), Image.Resampling.HAMMING
+        ).save(background_path)
+        self.pic1_tk = tk.PhotoImage(file=background_path)
+        canvas = self.builder.get_object('pic1_canvas', self.master)
+        canvas.delete('all')
+        canvas.create_image(0, 0, image=self.pic1_tk, anchor='nw')
+
         self.update_preview()
 
     def on_pic0_scaling(self, event):
         try:
-            v = float(self.builder.get_variable('pic0scaling_variable').get())
-        except:
+            value = float(
+                self.builder.get_variable('pic0scaling_variable').get()
+            )
+        except ValueError:
             return
 
-        if v > 0.1 and v != self.pic0scaling and self.disc_ids:
-            self.pic0scaling = v
-            games[self.disc_ids[0]]['pic0-scaling'] = self.pic0scaling
+        if value > 0.1 and value != self.pic0scaling and self.disc_ids:
+            self.pic0scaling = value
             self.update_preview()
 
     def on_pic0_xoffset(self, event):
         try:
-            v = float(self.builder.get_variable('pic0xoffset_variable').get())
-        except:
+            value = float(
+                self.builder.get_variable('pic0xoffset_variable').get()
+            )
+        except ValueError:
             return
 
-        if v >= 0.0 and v != self.pic0xoffset and self.disc_ids:
-            self.pic0xoffset = v
-            games[self.disc_ids[0]]['pic0-offset'] = (self.pic0xoffset, self.pic0yoffset)
+        if value >= 0.0 and value != self.pic0xoffset and self.disc_ids:
+            self.pic0xoffset = value
             self.update_preview()
             
     def on_pic0_yoffset(self, event):
         try:
-            v = float(self.builder.get_variable('pic0yoffset_variable').get())
-        except:
+            value = float(
+                self.builder.get_variable('pic0yoffset_variable').get()
+            )
+        except ValueError:
             return
 
-        if v >= 0.0 and v != self.pic0yoffset and self.disc_ids:
-            self.pic0yoffset = v
-            games[self.disc_ids[0]]['pic0-offset'] = (self.pic0xoffset, self.pic0yoffset)
+        if value >= 0.0 and value != self.pic0yoffset and self.disc_ids:
+            self.pic0yoffset = value
             self.update_preview()
             
-    def on_dir_changed(self, event):
-        self.pkgdir = event.widget.cget('path')
-        # PKG in print()
-
     def _ps3_output_path(self):
         filename = self.builder.get_variable('pkgfile_variable').get()
         filename = filename or 'game.pkg'
@@ -790,7 +815,7 @@ class Ps3App(DesktopAppMixin):
             background=background,
             cue_files=tuple(self.cue_files),
             real_cue_files=tuple(self.real_cue_files),
-            image_files=tuple(self.img_files),
+            image_files=tuple(self.image_files),
             work_dir=self.subdir,
             sound=sound,
             manual=self.builder.get_variable('manual_variable').get(),
