@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 
 import argparse
+from dataclasses import dataclass
 import datetime
 import io
 import os
@@ -15,10 +16,14 @@ import tkinter.ttk as ttk
 from tkinterdnd2 import *
 import zipfile
 from pathlib import Path
-from popfe_gui import (
-    FinishedDialog,
-    confirm_conversion_without_fix,
+from psxfoundry.gui import (
+    CompletionDialog,
+    ConversionTask,
+    build_plan_with_missing_fix_prompt,
+    clear_temporary_paths,
+    find_preview_audio_url,
     install_tk_error_handler,
+    show_conversion_error,
 )
 from popfe_runtime import runtime as popfe_runtime
 from psxfoundry.cache import AnalysisCache
@@ -27,7 +32,6 @@ from psxfoundry.psp_workflow import (
     read_ps3_configs,
 )
 from psxfoundry.report import render_target_workflow_report
-from psxfoundry.registry import CompatibilityAssetError
 
 
 have_pytube = False
@@ -41,6 +45,7 @@ from PIL import Image, ImageDraw
 from bchunk import bchunk
 import importlib  
 from gamedb import games, themes
+from layout import image_has_transparency
 try:
     import popfe
 except:
@@ -55,6 +60,30 @@ PROJECT_UI = popfe_runtime.resource_path("pop-fe-ps3.ui", required=True)
 PREFERENCES_PATH = popfe_runtime.application_preference_path(
     "psxfoundry-ps3.config"
 )
+
+
+@dataclass(frozen=True)
+class Ps3ConversionRequest:
+    plan: object
+    output_path: str
+    disc_ids: tuple[str, ...]
+    real_disc_ids: tuple[str, ...]
+    title: str
+    icon: object
+    logo: object
+    background: object
+    cue_files: tuple[str, ...]
+    real_cue_files: tuple[str, ...]
+    image_files: tuple[str, ...]
+    work_dir: str
+    sound: str | None
+    manual: str
+    undither: bool
+    use_new_emulator: bool
+    allow_disc_swap: bool
+    force_ntsc: bool
+    data_track_only: bool
+    resolution: int
 
 
 class Ps3App:
@@ -94,6 +123,7 @@ class Ps3App:
         self.pic0yoffset = 0.1
         self.manual = None
         self.conversion_plan = None
+        self.conversion_task = None
         self.analysis_cache = AnalysisCache(
             popfe_runtime.cache_dir / 'psxfoundry' / 'analysis'
         )
@@ -187,17 +217,8 @@ class Ps3App:
 
     def __del__(self):
         global temp_files
-        print('Delete temporary files') if verbose else None
-        for f in temp_files:
-            print('Deleting temp/dir file', f) if verbose else None
-            try:
-                os.unlink(f)
-            except:
-                try:
-                    os.rmdir(f)
-                except:
-                    True
-        temp_files = []  
+        clear_temporary_paths(temp_files, verbose=verbose)
+        temp_files = []
 
     def update_prefs(self):
         PREFERENCES_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -319,29 +340,12 @@ class Ps3App:
         return plan
 
     def _refresh_conversion_plan_with_prompt(self):
-        try:
-            return self._refresh_conversion_plan()
-        except CompatibilityAssetError as error:
-            if not confirm_conversion_without_fix(self.master, error):
-                return None
-            return self._refresh_conversion_plan(allow_missing_fixes=True)
+        return build_plan_with_missing_fix_prompt(
+            self.master,
+            self._refresh_conversion_plan,
+        )
 
     def update_preview(self):
-        def has_transparency(img):
-            if img.info.get("transparency", None) is not None:
-                return True
-            if img.mode == "P":
-                transparent = img.info.get("transparency", -1)
-                for _, index in img.getcolors():
-                    if index == transparent:
-                        return True
-            elif img.mode == "RGBA":
-                extrema = img.getextrema()
-                if extrema[3][0] < 255:
-                    return True
-
-                return False
-
         if self.pic0_orig and self.pic0.mode == 'P':
             self.pic0_orig = self.pic0.convert(mode='RGBA')
 
@@ -361,7 +365,7 @@ class Ps3App:
             _pic0 = popfe.rescale_pic0(self.pic0_orig, popfe.get_pic0_scaling(self.disc_ids[0]), popfe.get_pic0_offset(self.disc_ids[0]))
         if _pic0:
             p0 = _pic0.resize((int(p1.size[0] * 0.55) , int(p1.size[1] * 0.58)), Image.Resampling.HAMMING)
-            if has_transparency(p0):
+            if image_has_transparency(p0):
                 Image.Image.paste(p1, p0, box=(148,79), mask=p0)
             else:
                 Image.Image.paste(p1, p0, box=(148,79))
@@ -371,7 +375,7 @@ class Ps3App:
         if self.disc and self.icon0_disc == 'on':
                 i0 = self.disc.resize((int(p1.size[0] * 0.10) , int(p1.size[0] * 0.10)), Image.Resampling.HAMMING)
         if i0:
-            if has_transparency(i0):
+            if image_has_transparency(i0):
                 Image.Image.paste(p1, i0, box=(100,79), mask=i0)
             else:
                 Image.Image.paste(p1, i0, box=(100,79))
@@ -847,106 +851,197 @@ class Ps3App:
         if not have_pytube:
             return
         self.master.config(cursor='watch')
-        a = pytube.contrib.search.Search(self.builder.get_variable('title_variable').get() + ' ps1 ost')
-        if a:
-            self.builder.get_variable('snd0_variable').set('https://www.youtube.com/watch?v=' + a.results[0].video_id)
-           
-        self.master.config(cursor='')
+        try:
+            title = self.builder.get_variable('title_variable').get()
+            audio_url = find_preview_audio_url(
+                title,
+                pytube.contrib.search.Search,
+            )
+            if audio_url:
+                self.builder.get_variable('snd0_variable').set(audio_url)
+        finally:
+            self.master.config(cursor='')
 
-    def on_create_pkg(self):        
-        pkg = self.builder.get_variable('pkgfile_variable').get()
-        pkgdir = self.builder.get_variable('pkgdir_variable').get()
-        if len(pkg) == 0:
-            pkg = 'game.pkg'
-        if len(pkgdir):
-            pkg = pkgdir + '/' + pkg
-        elif popfe_runtime.is_macos:
-            pkg = str(popfe_runtime.home / pkg)
-        print('Creating ' + pkg)
-        plan = self.conversion_plan or self._refresh_conversion_plan_with_prompt()
-        if plan is None:
-            return
-        disc_ids = []
-        for idx in range(len(self.cue_files)):
-            d = self.builder.get_variable('discid%d_variable' % (idx + 1)).get()
-            disc_ids.append(d)
+    def _ps3_output_path(self):
+        filename = self.builder.get_variable('pkgfile_variable').get()
+        filename = filename or 'game.pkg'
+        output_directory = self.builder.get_variable('pkgdir_variable').get()
+        if output_directory:
+            return str(Path(output_directory) / filename)
+        if popfe_runtime.is_macos:
+            return str(popfe_runtime.home / filename)
+        return filename
 
-        disc_id = disc_ids[0]
-        title = self.builder.get_variable('title_variable').get()
-        print('DISC', disc_id)
-        print('TITLE', title)
+    def _build_ps3_conversion_request(self, plan):
+        disc_ids = tuple(
+            self.builder.get_variable(
+                'discid%d_variable' % (index + 1)
+            ).get()
+            for index in range(len(self.cue_files))
+        )
+        force_ntsc = (
+            self.builder.get_variable('force_ntsc_variable').get() == 'on'
+        )
         resolution = 1
-        if disc_id[:3] == 'SLE' or disc_id[:3] == 'SCE':
-            print('SLES/SCES PAL game. Default resolution set to 2 (640x512)') if verbose else None
+        if disc_ids[0].startswith(('SLE', 'SCE')) and not force_ntsc:
             resolution = 2
-        if self.builder.get_variable('force_ntsc_variable').get() == 'on':
-            resolution = 1
 
-        self.master.config(cursor='watch')
-        self.master.update()
-
-        snd0 = None
-        if self.snd0_disabled == 'off':
-            snd0 = self.builder.get_variable('snd0_variable').get()
-            if snd0[:24] == 'https://www.youtube.com/':
-                snd0 = popfe.get_snd0_from_link(snd0, subdir=self.subdir)
-                if snd0:
-                    temp_files.append(snd0)
-
-        p1 = self.pic1 if self.pic1_bc=='off' else self.back
+        background = self.pic1 if self.pic1_bc == 'off' else self.back
         if self.pic1_disabled == 'on':
-            p1 = None
+            background = None
+        sound = None
+        if self.snd0_disabled == 'off':
+            sound = self.builder.get_variable('snd0_variable').get()
 
-        manual = self.builder.get_variable('manual_variable').get()
-        if manual and len(manual) and manual != 'None':
-            manual = popfe.create_manual(manual, self.disc_ids[0], subdir=self.subdir, ps3_manual=True)
+        return Ps3ConversionRequest(
+            plan=plan,
+            output_path=self._ps3_output_path(),
+            disc_ids=disc_ids,
+            real_disc_ids=tuple(self.real_disc_ids),
+            title=self.builder.get_variable('title_variable').get(),
+            icon=self.icon0 if self.icon0_disc == 'off' else self.disc,
+            logo=self.pic0 if self.pic0_disabled == 'off' else None,
+            background=background,
+            cue_files=tuple(self.cue_files),
+            real_cue_files=tuple(self.real_cue_files),
+            image_files=tuple(self.img_files),
+            work_dir=self.subdir,
+            sound=sound,
+            manual=self.builder.get_variable('manual_variable').get(),
+            undither=(
+                self.builder.get_variable('psx_undither_variable').get() == 'on'
+            ),
+            use_new_emulator=(
+                self.builder.get_variable('force_newemu_variable').get() == 'on'
+            ),
+            allow_disc_swap=(
+                self.builder.get_variable('allow_discswap_variable').get() == 'on'
+            ),
+            force_ntsc=force_ntsc,
+            data_track_only=self.data_track_only == 'on',
+            resolution=resolution,
+        )
+
+    def _prepare_ps3_assets(self, request, set_phase):
+        set_phase('Preparing assets...')
+        sound = request.sound
+        if sound and sound.startswith('https://www.youtube.com/'):
+            sound = popfe.get_snd0_from_link(sound, subdir=request.work_dir)
+            if sound:
+                temp_files.append(sound)
+
+        manual = request.manual
+        if manual and manual != 'None':
+            manual = popfe.create_manual(
+                manual,
+                request.real_disc_ids[0],
+                subdir=request.work_dir,
+                ps3_manual=True,
+            )
         else:
             manual = None
+        return sound, manual
 
-        undither = self.builder.get_variable('psx_undither_variable').get() == 'on'
+    def _create_ps3_package(self, request, set_phase):
+        sound, manual = self._prepare_ps3_assets(request, set_phase)
+        set_phase('Applying compatibility fixes...')
         working_cues, working_images, magic_word, subchannels = (
             popfe.prepare_target_inputs(
-                plan,
-                self.cue_files,
-                self.img_files,
-                self.real_disc_ids,
-                self.subdir,
-                undither=undither,
+                request.plan,
+                request.cue_files,
+                request.image_files,
+                request.real_disc_ids,
+                request.work_dir,
+                undither=request.undither,
             )
         )
 
-        aea_files, extra_data_tracks = popfe.generate_aea_files(
-            working_cues, working_images, self.subdir
+        set_phase('Processing audio...')
+        audio_files, extra_data_tracks = popfe.generate_aea_files(
+            working_cues,
+            working_images,
+            request.work_dir,
         )
-        if extra_data_tracks:
-            self.data_track_only = 'on'
-        
-        newemu   = self.builder.get_variable('force_newemu_variable').get() == 'on'
-        swap     = self.builder.get_variable('allow_discswap_variable').get() == 'on'
-        ntsc     = self.builder.get_variable('force_ntsc_variable').get() == 'on'
+        data_track_only = request.data_track_only or bool(extra_data_tracks)
 
-        output_path = popfe.create_ps3(pkg, disc_ids, self.real_disc_ids, title,
-                         self.icon0 if self.icon0_disc=='off' else self.disc,
-                         self.pic0 if self.pic0_disabled =='off' else None,
-                         p1,
-                         working_cues, self.real_cue_files,
-                         working_images, [], aea_files, magic_word,
-                         resolution, subdir=self.subdir, snd0=snd0,
-                         subchannels=subchannels, manual=manual,
-                         whole_disk=True if self.data_track_only=='off' else False,
-                         psx_undither=False,
-                         ps1_newemu=newemu, enable_swap=swap, force_ntsc=ntsc,
-                         no_libcrypt=True,
-                         planned_configs=read_ps3_configs(plan))
+        set_phase('Creating PS3 package...')
+        output_path = popfe.create_ps3(
+            request.output_path,
+            request.disc_ids,
+            request.real_disc_ids,
+            request.title,
+            request.icon,
+            request.logo,
+            request.background,
+            working_cues,
+            request.real_cue_files,
+            working_images,
+            [],
+            audio_files,
+            magic_word,
+            request.resolution,
+            subdir=request.work_dir,
+            snd0=sound,
+            subchannels=subchannels,
+            manual=manual,
+            whole_disk=not data_track_only,
+            psx_undither=False,
+            ps1_newemu=request.use_new_emulator,
+            enable_swap=request.allow_disc_swap,
+            force_ntsc=request.force_ntsc,
+            no_libcrypt=True,
+            planned_configs=read_ps3_configs(request.plan),
+        )
+        set_phase('Writing conversion report...')
         Path(output_path).with_name('PSXFoundry-report.txt').write_text(
-            render_target_workflow_report(plan) + 'Validation: passed\n',
+            render_target_workflow_report(request.plan) + 'Validation: passed\n',
             encoding='utf-8',
         )
-        self.master.config(cursor='')
+        return Path(output_path)
 
-        d = FinishedDialog(self.master, "Finished creating PKG")
-        self.master.wait_window(d)
+    def _finish_ps3_conversion(self, output_path):
+        completion = CompletionDialog(
+            self.master,
+            'Finished creating PKG\n' + str(output_path),
+        )
+        self.master.wait_window(completion)
         self.init_data()
+
+    def on_create_pkg(self):
+        if not self.cue_files:
+            return
+        if self.conversion_task is not None and self.conversion_task.running:
+            return
+        try:
+            plan = (
+                self.conversion_plan
+                or self._refresh_conversion_plan_with_prompt()
+            )
+            if plan is None:
+                return
+            request = self._build_ps3_conversion_request(plan)
+        except Exception as error:
+            show_conversion_error(
+                self.master,
+                popfe_runtime,
+                'ps3',
+                'Could not create PKG',
+                error,
+            )
+            return
+
+        print('Creating', request.output_path)
+        print('DISC', request.disc_ids[0])
+        print('TITLE', request.title)
+        self.conversion_task = ConversionTask(
+            self.master,
+            popfe_runtime,
+            'ps3',
+            'Could not create PKG',
+            lambda set_phase: self._create_ps3_package(request, set_phase),
+            self._finish_ps3_conversion,
+        )
+        self.conversion_task.start()
 
     def on_reset(self):
         self.init_data()

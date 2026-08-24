@@ -4,8 +4,8 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 from unittest.mock import patch
 
-from popfe_gui import confirm_conversion_without_fix, write_exception_log
 from popfe_runtime import RuntimePaths
+from psxfoundry.gui import confirm_conversion_without_fix, write_exception_log
 from psxfoundry.registry import CompatibilityAssetError
 
 
@@ -120,15 +120,17 @@ class GuiPathTests(unittest.TestCase):
 
         self.assertIn("class PspApp:", psp_source)
         self.assertIn("class Ps3App:", ps3_source)
-        self.assertNotIn("class FinishedDialog", psp_source + ps3_source)
+        self.assertNotIn("class CompletionDialog", psp_source + ps3_source)
 
     def test_psp_conversion_runs_behind_a_modal_progress_dialog(self):
         source = (REPOSITORY_ROOT / "pop-fe-psp.py").read_text(encoding="utf-8")
-        dialogs = (REPOSITORY_ROOT / "popfe_gui.py").read_text(encoding="utf-8")
+        dialogs = (REPOSITORY_ROOT / "psxfoundry/gui.py").read_text(
+            encoding="utf-8"
+        )
 
-        self.assertIn("threading.Thread(", source)
-        self.assertIn("ConversionDialog(self.master)", source)
-        self.assertIn("self.master.after(50, self._poll_conversion)", source)
+        self.assertIn("ConversionTask(", source)
+        self.assertIn("threading.Thread(", dialogs)
+        self.assertIn("self.root.after(50, self._poll)", dialogs)
         self.assertIn("set_phase('Creating EBOOT.PBP...')", source)
         self.assertIn("set_phase('Validating EBOOT.PBP...')", source)
         self.assertIn('self.protocol("WM_DELETE_WINDOW", lambda: None)', dialogs)

@@ -1,29 +1,92 @@
 #!/usr/bin/env python
-# coding: utf-8
-#
-import argparse
-import importlib
-from PIL import Image, ImageDraw, ImageFont
-popfe = importlib.import_module("pop-fe")
-from gamedb import games
 
-def has_transparency(img):
-    if img.info.get("transparency", None) is not None:
+import sys
+
+from PIL import Image, ImageDraw, ImageFont
+
+
+def load_theme_font(size):
+    font_name = "arial.ttf" if sys.platform == "win32" else "DejaVuSansMono.ttf"
+    try:
+        return ImageFont.truetype(font_name, size)
+    except OSError:
+        return ImageFont.load_default()
+
+
+def create_dot_title(title, horizontal_offset):
+    source = Image.new("RGB", (250, 140), (0, 0, 0))
+    font = load_theme_font(12)
+    drawing = ImageDraw.Draw(source)
+    line_y = 1
+    border = "##############################"
+
+    def text_height(text):
+        box = drawing.textbbox((0, 0), text, font=font)
+        return box[3] - box[1]
+
+    drawing.text(
+        (horizontal_offset, line_y),
+        border,
+        font=font,
+        fill=(255, 128, 128, 255),
+    )
+    line_y += text_height(border) + 2
+    for title_line in title.split(" - "):
+        drawing.text(
+            (horizontal_offset, line_y),
+            "#",
+            font=font,
+            fill=(255, 128, 128, 255),
+        )
+        drawing.text(
+            (horizontal_offset + 11, line_y),
+            title_line,
+            font=font,
+            fill=(255, 255, 255, 255),
+        )
+        line_y += text_height(title_line) + 2
+    drawing.text(
+        (horizontal_offset, line_y),
+        border,
+        font=font,
+        fill=(255, 128, 128, 255),
+    )
+
+    result = Image.new("RGBA", (1000, 560), (255, 255, 255, 0))
+    drawing = ImageDraw.Draw(result)
+    for x_position in range(250):
+        for y_position in range(140):
+            pixel = source.getpixel((x_position, y_position))
+            if pixel != (0, 0, 0):
+                drawing.ellipse(
+                    (
+                        (x_position * 4, y_position * 4),
+                        (x_position * 4 + 3, y_position * 4 + 3),
+                    ),
+                    fill=pixel,
+                )
+    return result
+
+def image_has_transparency(image):
+    if image.info.get("transparency") is not None:
         return True
-    if img.mode == "P":
-        transparent = img.info.get("transparency", -1)
-        for _, index in img.getcolors():
+    if image.mode == "P":
+        transparent = image.info.get("transparency", -1)
+        for _, index in image.getcolors():
             if index == transparent:
                 return True
-    elif img.mode == "RGBA":
-        extrema = img.getextrema()
-        if extrema[3][0] < 255:
-            return True
-
-        return False
+    elif image.mode == "RGBA":
+        return image.getextrema()[3][0] < 255
+    return False
 
 
 if __name__ == "__main__":
+    import argparse
+    import importlib
+
+    from gamedb import games
+
+    popfe = importlib.import_module("pop-fe")
     parser = argparse.ArgumentParser()
     parser.add_argument('--gameid', help='Game ID.')
     parser.add_argument('--pic0-scaling', help='Scaing factor to use for PIC0')
@@ -52,7 +115,7 @@ if __name__ == "__main__":
     # PS3
     pic0 = p0.resize((1000,560), Image.Resampling.LANCZOS)
     pic1 = p1.resize((1920,1080), Image.Resampling.LANCZOS)
-    if has_transparency(pic0):
+    if image_has_transparency(pic0):
         Image.Image.paste(pic1, pic0,
                           box=(760,425,1760,985), mask=pic0)
     else:
@@ -67,7 +130,7 @@ if __name__ == "__main__":
     # PSP
     pic0 = p0.resize((280,170), Image.Resampling.LANCZOS)
     pic1 = p1.resize((480,272), Image.Resampling.LANCZOS)
-    if has_transparency(pic0):
+    if image_has_transparency(pic0):
         Image.Image.paste(pic1, pic0,
                           box=(190,100,470,270), mask=pic0)
     else:

@@ -96,10 +96,43 @@ from psxfoundry.work import atomic_output, clone_or_copy
 from ppf import ApplyPPF
 from riff import copy_riff, create_riff, parse_riff
 try:
-    from theme_ascii import create_ascii_pic0, create_ascii_pic1
-    from theme_dotpainting import create_dotpainting_pic0, create_dotpainting_pic1
-    from theme_opencv import create_oilpainting_pic0, create_oilpainting_pic1, create_watercolor_pic0, create_watercolor_pic1, create_colorsketch_pic0, create_colorsketch_pic1
-except:
+    from theme_ascii import create_ascii_background, create_ascii_title
+    from theme_dotpainting import (
+        create_dotpainting_background,
+        create_dotpainting_title,
+    )
+    from theme_opencv import (
+        create_color_sketch_background,
+        create_oil_painting_background,
+        create_styled_title,
+        create_watercolor_background,
+    )
+
+    AUTOMATIC_THEME_BUILDERS = {
+        'ASCIIART': (create_ascii_title, create_ascii_background, False),
+        'DOTPAINTING': (
+            create_dotpainting_title,
+            create_dotpainting_background,
+            False,
+        ),
+        'OILPAINTING': (
+            create_styled_title,
+            create_oil_painting_background,
+            True,
+        ),
+        'WATERCOLOR': (
+            create_styled_title,
+            create_watercolor_background,
+            True,
+        ),
+        'COLORSKETCH': (
+            create_styled_title,
+            create_color_sketch_background,
+            True,
+        ),
+    }
+except ImportError:
+    AUTOMATIC_THEME_BUILDERS = {}
     print('You need to install python module pillow and opencv-contrib-python')
     
 temp_files = []  
@@ -1993,22 +2026,7 @@ i0l = bytes([
 PSX_SITE = 'https://psxdatacenter.com/'
 verbose = False
 
-def has_transparency(img):
-    if img.info.get("transparency", None) is not None:
-        return True
-    if img.mode == "P":
-        transparent = img.info.get("transparency", -1)
-        for _, index in img.getcolors():
-            if index == transparent:
-                return True
-    elif img.mode == "RGBA":
-        extrema = img.getextrema()
-        if extrema[3][0] < 255:
-            return True
 
-        return False
-
-    
 def fetch_cached_file(path):
     try:
         ret = requests.get(PSX_SITE + path)
@@ -2058,55 +2076,20 @@ def get_snd0_from_theme(theme, game_id, subdir):
         return None
     
 def get_image_from_theme(theme, game_id, subdir, image):
-    if theme == 'ASCIIART':
+    automatic_theme = AUTOMATIC_THEME_BUILDERS.get(theme)
+    if automatic_theme:
+        title_builder, background_builder, uses_temporary_file = automatic_theme
         if image[:4] == 'PIC0':
-            return create_ascii_pic0(game_id, games[game_id]['title'])
+            return title_builder(games[game_id]['title'])
         if image[:4] == 'PIC1':
             game = get_game_from_gamelist(game_id)
-            icon0 = get_icon0_from_game(game_id, game, None, subdir + '/ICON0-theme.jpg')
-
-            return create_ascii_pic1(game_id, icon0)
-    if theme == 'DOTPAINTING':
-        if image[:4] == 'PIC0':
-            return create_dotpainting_pic0(game_id, games[game_id]['title'])
-        if image[:4] == 'PIC1':
-            game = get_game_from_gamelist(game_id)
-            icon0 = get_icon0_from_game(game_id, game, None, subdir + '/ICON0-theme.jpg')
-
-            return create_dotpainting_pic1(game_id, icon0)
-    if theme == 'OILPAINTING':
-        if image[:4] == 'PIC0':
-            tmpfile = subdir + '/pic0-tmp.png'
-            temp_files.append(tmpfile)
-            return create_oilpainting_pic0(game_id, games[game_id]['title'], tmpfile)
-        if image[:4] == 'PIC1':
-            game = get_game_from_gamelist(game_id)
-            icon0 = get_icon0_from_game(game_id, game, None, subdir + '/ICON0-theme.jpg')
-            tmpfile = subdir + '/pic1-tmp.png'
-            temp_files.append(tmpfile)
-            return create_oilpainting_pic1(game_id, icon0, tmpfile)
-    if theme == 'WATERCOLOR':
-        if image[:4] == 'PIC0':
-            tmpfile = subdir + '/pic0-tmp.png'
-            temp_files.append(tmpfile)
-            return create_watercolor_pic0(game_id, games[game_id]['title'], tmpfile)
-        if image[:4] == 'PIC1':
-            game = get_game_from_gamelist(game_id)
-            icon0 = get_icon0_from_game(game_id, game, None, subdir + '/ICON0-theme.jpg')
-            tmpfile = subdir + '/pic1-tmp.png'
-            temp_files.append(tmpfile)
-            return create_watercolor_pic1(game_id, icon0, tmpfile)
-    if theme == 'COLORSKETCH':
-        if image[:4] == 'PIC0':
-            tmpfile = subdir + '/pic0-tmp.png'
-            temp_files.append(tmpfile)
-            return create_colorsketch_pic0(game_id, games[game_id]['title'], tmpfile)
-        if image[:4] == 'PIC1':
-            game = get_game_from_gamelist(game_id)
-            icon0 = get_icon0_from_game(game_id, game, None, subdir + '/ICON0-theme.jpg')
-            tmpfile = subdir + '/pic1-tmp.png'
-            temp_files.append(tmpfile)
-            return create_colorsketch_pic1(game_id, icon0, tmpfile)
+            icon_path = subdir + '/ICON0-theme.jpg'
+            icon = get_icon0_from_game(game_id, game, None, icon_path)
+            temporary_path = None
+            if uses_temporary_file:
+                temporary_path = subdir + '/pic1-tmp.png'
+                temp_files.append(temporary_path)
+            return background_builder(icon, temporary_path)
     if 'auto' in themes[theme]:
         return None
     try:

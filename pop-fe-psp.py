@@ -5,23 +5,23 @@ from dataclasses import dataclass
 import hashlib
 import os
 import pygubu
-import queue
 import re
 import shutil
 import struct
 import subprocess
-import threading
 import tkinter as tk
 import tkinter.ttk as ttk
 import zipfile
 from pathlib import Path
 from tkinter import filedialog, messagebox
-from popfe_gui import (
-    ConversionDialog,
-    FinishedDialog,
-    confirm_conversion_without_fix,
+from psxfoundry.gui import (
+    CompletionDialog,
+    ConversionTask,
+    build_plan_with_missing_fix_prompt,
+    clear_temporary_paths,
+    find_preview_audio_url,
     install_tk_error_handler,
-    write_exception_log,
+    show_conversion_error,
 )
 from popfe_psp_import import FolderImportError, scan_psp_folder
 from popfe_runtime import runtime as popfe_runtime
@@ -36,7 +36,6 @@ from psxfoundry.report import (
     render_target_workflow_report,
     render_workflow_summary,
 )
-from psxfoundry.registry import CompatibilityAssetError
 from psxfoundry.sbi import (
     SbiError,
     SbiSelection,
@@ -56,6 +55,7 @@ from PIL import Image
 from bchunk import bchunk
 import importlib  
 from gamedb import games, libcrypt, themes
+from layout import image_has_transparency
 try:
     import popfe
 except:
@@ -126,6 +126,19 @@ class PspConversionRequest:
     manual_overrides: tuple[str, ...]
 
 
+@dataclass(frozen=True)
+class PreparedPspConversion:
+    cue_files: tuple[str, ...]
+    image_files: tuple[str, ...]
+    audio_files: tuple[str, ...]
+    subchannels: tuple[bytes | None, ...]
+    planned_configs: tuple[bytes | None, ...]
+    sound: object
+    manual: object
+    logo: object
+    expectation: EbootExpectation
+
+
 class PspApp:
     def __init__(self, master=None):
         self.myrect = None
@@ -167,8 +180,7 @@ class PspApp:
         self.snd0_path = None
         self.path_dir = None
         self.conversion_plan = None
-        self.conversion_dialog = None
-        self.conversion_events = None
+        self.conversion_task = None
         self.advanced_visible = False
         self.advanced_overrides = set()
         self.analysis_cache = AnalysisCache(
@@ -242,17 +254,8 @@ class PspApp:
 
     def __del__(self):
         global temp_files
-        print('Delete temporary files') if verbose else None
-        for f in temp_files:
-            print('Deleting temp/dir file', f) if verbose else None
-            try:
-                os.unlink(f)
-            except:
-                try:
-                    os.rmdir(f)
-                except:
-                    True
-        temp_files = []  
+        clear_temporary_paths(temp_files, verbose=verbose)
+        temp_files = []
 
     def _configure_layout(self):
         main = self.mainwindow
@@ -859,12 +862,10 @@ class PspApp:
         return plan
 
     def _refresh_conversion_plan_with_prompt(self):
-        try:
-            return self._refresh_conversion_plan()
-        except CompatibilityAssetError as error:
-            if not confirm_conversion_without_fix(self.master, error):
-                return None
-            return self._refresh_conversion_plan(allow_missing_fixes=True)
+        return build_plan_with_missing_fix_prompt(
+            self.master,
+            self._refresh_conversion_plan,
+        )
 
     def on_target_selected(self, event=None):
         self.update_prefs()
@@ -1131,21 +1132,6 @@ class PspApp:
 
 
     def update_preview(self):
-        def has_transparency(img):
-            if img.info.get("transparency", None) is not None:
-                return True
-            if img.mode == "P":
-                transparent = img.info.get("transparency", -1)
-                for _, index in img.getcolors():
-                    if index == transparent:
-                        return True
-            elif img.mode == "RGBA":
-                extrema = img.getextrema()
-                if extrema[3][0] < 255:
-                    return True
-
-                return False
-
         if not len(self.disc_ids):
             return
 
@@ -1173,13 +1159,13 @@ class PspApp:
         p1 = p1.convert('RGBA')
         if _pic0:
             p0 = _pic0.resize((int(p1.size[0] * 0.55) , int(p1.size[1] * 0.58)), Image.Resampling.HAMMING)
-            if has_transparency(p0):
+            if image_has_transparency(p0):
                 Image.Image.paste(p1, p0, box=(148,79), mask=p0)
             else:
                 Image.Image.paste(p1, p0, box=(148,79))
         if self.icon0:
             i0 = self.icon0.resize((int(p1.size[1] * 0.25) , int(p1.size[1] * 0.25)), Image.Resampling.HAMMING)
-            if has_transparency(i0):
+            if image_has_transparency(i0):
                 Image.Image.paste(p1, i0, box=(36,81), mask=i0)
             else:
                 Image.Image.paste(p1, i0, box=(36,81))
@@ -1310,11 +1296,16 @@ class PspApp:
         if not have_pytube:
             return
         self.master.config(cursor='watch')
-        a = pytube.contrib.search.Search(self.builder.get_variable('title_variable').get() + ' ps1 ost')
-        if a:
-            self.builder.get_variable('snd0_variable').set('https://www.youtube.com/watch?v=' + a.results[0].video_id)
-           
-        self.master.config(cursor='')
+        try:
+            title = self.builder.get_variable('title_variable').get()
+            audio_url = find_preview_audio_url(
+                title,
+                pytube.contrib.search.Search,
+            )
+            if audio_url:
+                self.builder.get_variable('snd0_variable').set(audio_url)
+        finally:
+            self.master.config(cursor='')
 
     def _build_conversion_request(self, plan):
         output_dir = self.builder.get_variable('pkgdir_variable').get()
@@ -1365,17 +1356,13 @@ class PspApp:
             manual_overrides=self._manual_override_labels(),
         )
 
-    def _create_eboot(self, request, set_phase):
-        print('Creating EBOOT')
-        print('DISC', request.disc_ids[0])
-        print('TITLE', request.title)
-
+    def _prepare_psp_assets(self, request, set_phase):
         set_phase('Preparing assets...')
-        snd0 = request.snd0
-        if snd0[:24] == 'https://www.youtube.com/':
-            snd0 = popfe.get_snd0_from_link(snd0, subdir=request.work_dir)
-            if snd0:
-                temp_files.append(snd0)
+        sound = request.snd0
+        if sound.startswith('https://www.youtube.com/'):
+            sound = popfe.get_snd0_from_link(sound, subdir=request.work_dir)
+            if sound:
+                temp_files.append(sound)
 
         manual = request.manual
         if manual and manual != 'None':
@@ -1387,6 +1374,13 @@ class PspApp:
         else:
             manual = None
 
+        logo = Image.open(request.logo_path) if request.logo_path else None
+        if request.use_pic1_as_logo:
+            logo = request.pic1
+        return sound, manual, logo
+
+    def _prepare_psp_conversion(self, request, set_phase):
+        sound, manual, logo = self._prepare_psp_assets(request, set_phase)
         set_phase('Applying compatibility fixes...')
         working_cues, working_images, _, subchannels = (
             popfe.prepare_target_inputs(
@@ -1429,13 +1423,35 @@ class PspApp:
             bytes(popfe.get_toc_from_cue(cue)).ljust(1020, b'\x00')
             for cue in working_cues
         )
+        expectation = EbootExpectation(
+            disc_ids=request.disc_ids,
+            decoded_sizes=expected_sizes,
+            decoded_sha256=expected_hashes,
+            tocs=expected_tocs,
+            configs=expected_configs,
+            subchannel_records=tuple(
+                len(data) // 12 if data is not None else 0
+                for data in subchannels
+            ),
+            subchannel_sha256=tuple(
+                hashlib.sha256(data).hexdigest() if data is not None else None
+                for data in subchannels
+            ),
+        )
+        return PreparedPspConversion(
+            cue_files=tuple(working_cues),
+            image_files=tuple(working_images),
+            audio_files=tuple(aea_files),
+            subchannels=tuple(subchannels),
+            planned_configs=tuple(planned_configs),
+            sound=sound,
+            manual=manual,
+            logo=logo,
+            expectation=expectation,
+        )
 
-        logo = Image.open(request.logo_path) if request.logo_path else None
-        if request.use_pic1_as_logo:
-            logo = request.pic1
-
-        set_phase('Creating EBOOT.PBP...')
-        output_path = Path(
+    def _write_psp_eboot(self, request, prepared):
+        return Path(
             popfe.create_psp(
                 request.output_dir,
                 request.disc_ids,
@@ -1444,49 +1460,33 @@ class PspApp:
                 request.icon0,
                 None if request.disable_pic0 else request.pic0,
                 None if request.disable_pic1 else request.pic1,
-                working_cues,
+                prepared.cue_files,
                 request.real_cue_files,
-                working_images,
+                prepared.image_files,
                 [],
-                aea_files,
+                prepared.audio_files,
                 subdir=request.work_dir,
-                snd0=snd0,
+                snd0=prepared.sound,
                 no_pstitleimg=request.disable_title_image,
                 watermark=request.watermark,
-                subchannels=subchannels,
-                manual=manual,
+                subchannels=prepared.subchannels,
+                manual=prepared.manual,
                 use_cdda=request.use_cdda,
-                logo=logo,
+                logo=prepared.logo,
                 no_libcrypt=True,
                 psx_undither=False,
                 force_ntsc=request.force_ntsc,
                 cdda=request.use_cdda,
-                planned_configs=planned_configs,
+                planned_configs=prepared.planned_configs,
                 compression_level=request.plan.compression_level,
             )
         )
 
-        set_phase('Validating EBOOT.PBP...')
+    def _validate_psp_eboot(self, request, prepared, output_path):
         report_path = output_path.with_name('PSXFoundry-report.txt')
         validation = validate_generated_eboot(
             output_path,
-            EbootExpectation(
-                disc_ids=request.disc_ids,
-                decoded_sizes=expected_sizes,
-                decoded_sha256=expected_hashes,
-                tocs=expected_tocs,
-                configs=expected_configs,
-                subchannel_records=tuple(
-                    len(data) // 12 if data is not None else 0
-                    for data in subchannels
-                ),
-                subchannel_sha256=tuple(
-                    hashlib.sha256(data).hexdigest()
-                    if data is not None
-                    else None
-                    for data in subchannels
-                ),
-            ),
+            prepared.expectation,
             report_path=report_path,
         )
         report = render_target_workflow_report(request.plan)
@@ -1500,7 +1500,7 @@ class PspApp:
         ) + '\n'
         protection_lines = []
         for index, (disc, origin, data) in enumerate(
-            zip(request.plan.discs, request.sbi_origins, subchannels),
+            zip(request.plan.discs, request.sbi_origins, prepared.subchannels),
             start=1,
         ):
             if origin:
@@ -1522,81 +1522,25 @@ class PspApp:
             raise RuntimeError(
                 'EBOOT validation failed. See ' + str(report_path)
             )
+
+    def _create_eboot(self, request, set_phase):
+        print('Creating EBOOT')
+        print('DISC', request.disc_ids[0])
+        print('TITLE', request.title)
+        prepared = self._prepare_psp_conversion(request, set_phase)
+        set_phase('Creating EBOOT.PBP...')
+        output_path = self._write_psp_eboot(request, prepared)
+        set_phase('Validating EBOOT.PBP...')
+        self._validate_psp_eboot(request, prepared, output_path)
         return output_path
 
-    def _run_conversion(self, request):
-        def set_phase(message):
-            self.conversion_events.put(('phase', message))
-
-        try:
-            output_path = self._create_eboot(request, set_phase)
-        except Exception as error:
-            try:
-                log_path = write_exception_log(
-                    popfe_runtime,
-                    'psp',
-                    type(error),
-                    error,
-                    error.__traceback__,
-                )
-            except Exception:
-                log_path = None
-            self.conversion_events.put(('error', error, log_path))
-            return
-        self.conversion_events.put(('complete', output_path))
-
-    def _close_conversion_dialog(self):
-        if self.conversion_dialog is not None:
-            self.conversion_dialog.close()
-        self.conversion_dialog = None
-        self.conversion_events = None
-
-    def _show_conversion_error(self, error, log_path=None):
-        if log_path is None:
-            try:
-                log_path = write_exception_log(
-                    popfe_runtime,
-                    'psp',
-                    type(error),
-                    error,
-                    error.__traceback__,
-                )
-            except Exception:
-                pass
-
-        message = str(error)
-        if log_path is not None:
-            message += '\n\nDiagnostic log: ' + str(log_path)
-        messagebox.showerror(
-            'Could not create EBOOT',
-            message,
-            parent=self.master,
+    def _finish_eboot_conversion(self, output_path):
+        dialog = CompletionDialog(
+            self.master,
+            'Finished creating EBOOT\n' + str(output_path),
         )
-
-    def _poll_conversion(self):
-        while True:
-            try:
-                event = self.conversion_events.get_nowait()
-            except queue.Empty:
-                self.master.after(100, self._poll_conversion)
-                return
-
-            if event[0] == 'phase':
-                self.conversion_dialog.set_phase(event[1])
-                continue
-
-            self._close_conversion_dialog()
-            if event[0] == 'error':
-                self._show_conversion_error(event[1], event[2])
-                return
-
-            dialog = FinishedDialog(
-                self.master,
-                'Finished creating EBOOT\n' + str(event[1]),
-            )
-            self.master.wait_window(dialog)
-            self.init_data()
-            return
+        self.master.wait_window(dialog)
+        self.init_data()
 
     def _confirm_generated_sbi_fallback(self, plan):
         missing = [
@@ -1630,7 +1574,9 @@ class PspApp:
         )
 
     def on_create_eboot(self):
-        if not self.cue_files or self.conversion_dialog is not None:
+        if not self.cue_files:
+            return
+        if self.conversion_task is not None and self.conversion_task.running:
             return
 
         try:
@@ -1644,17 +1590,24 @@ class PspApp:
                 return
             request = self._build_conversion_request(plan)
         except Exception as error:
-            self._show_conversion_error(error)
+            show_conversion_error(
+                self.master,
+                popfe_runtime,
+                'psp',
+                'Could not create EBOOT',
+                error,
+            )
             return
 
-        self.conversion_events = queue.Queue()
-        self.conversion_dialog = ConversionDialog(self.master)
-        threading.Thread(
-            target=self._run_conversion,
-            args=(request,),
-            daemon=True,
-        ).start()
-        self.master.after(50, self._poll_conversion)
+        self.conversion_task = ConversionTask(
+            self.master,
+            popfe_runtime,
+            'psp',
+            'Could not create EBOOT',
+            lambda set_phase: self._create_eboot(request, set_phase),
+            self._finish_eboot_conversion,
+        )
+        self.conversion_task.start()
 
     def on_reset(self):
         self.init_data()

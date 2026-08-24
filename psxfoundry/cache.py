@@ -5,19 +5,11 @@ import json
 from pathlib import Path, PurePosixPath
 
 from psxfoundry.disc import DiscDescription, TrackDescription
+from psxfoundry.serialization import canonical_json_bytes
 from psxfoundry.work import atomic_write
 
 
 SCHEMA_VERSION = 3
-
-
-def _canonical(data):
-    return json.dumps(
-        data,
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-    ).encode("utf-8")
 
 
 def _state(path):
@@ -191,7 +183,7 @@ class AnalysisCache:
 
     def put(self, description):
         """Store one analysis object and its current dependency state."""
-        payload = _canonical(_serialize(description))
+        payload = canonical_json_bytes(_serialize(description))
         object_digest = hashlib.sha256(payload).hexdigest()
         object_path = self.objects / (object_digest + ".json")
         if not object_path.is_file():
@@ -203,7 +195,10 @@ class AnalysisCache:
                 _state(path) for path in analysis_dependencies(description)
             ],
         }
-        atomic_write(self._index_path(description.source), _canonical(index_data))
+        atomic_write(
+            self._index_path(description.source),
+            canonical_json_bytes(index_data),
+        )
         return description
 
     def analyze(self, source, analyzer):

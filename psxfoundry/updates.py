@@ -14,6 +14,7 @@ from Crypto.PublicKey import ECC
 from Crypto.Signature import eddsa
 
 from psxfoundry.registry import file_sha256, parse_catalog, verify_rule_assets
+from psxfoundry.serialization import canonical_json_bytes
 from psxfoundry.work import atomic_output, atomic_write
 
 
@@ -32,15 +33,6 @@ class RegistryUpdateError(ValueError):
 class RegistryPack:
     version: str
     files: tuple[tuple[str, int, str], ...]
-
-
-def _canonical(data):
-    return json.dumps(
-        data,
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-    ).encode("utf-8")
 
 
 def _safe_path(value):
@@ -77,7 +69,7 @@ def sign_manifest(manifest, private_key):
     key = ECC.import_key(private_key)
     if not key.has_private() or key.curve != "Ed25519":
         raise RegistryUpdateError("registry signing key must be private Ed25519")
-    return eddsa.new(key, "rfc8032").sign(_canonical(manifest))
+    return eddsa.new(key, "rfc8032").sign(canonical_json_bytes(manifest))
 
 
 def _verify_signature(manifest_data, signature, public_key):
@@ -135,7 +127,7 @@ def build_registry_pack(output, version, repository_root, private_key):
     output = Path(output)
     files = collect_registry_files(repository_root)
     manifest = _manifest(version, files)
-    manifest_data = _canonical(manifest)
+    manifest_data = canonical_json_bytes(manifest)
     signature = sign_manifest(manifest, private_key)
     with atomic_output(output) as temporary:
         with zipfile.ZipFile(
@@ -252,7 +244,7 @@ def verify_registry_pack(pack_path, public_key):
 
 
 def _atomic_json(path, data):
-    atomic_write(path, _canonical(data))
+    atomic_write(path, canonical_json_bytes(data))
 
 
 def verify_installed_registry(directory, public_key):

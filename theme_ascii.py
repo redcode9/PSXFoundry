@@ -1,67 +1,74 @@
-#!/usr/bin/env python
-# coding: utf-8
-#
-# Auto theme for ASCII art
-#
-#
+"""ASCII artwork theme."""
 
-from PIL import Image, ImageDraw, ImageFont
-import os
-import sys
+from PIL import Image, ImageDraw
 
-if sys.platform == 'win32':
-    font = 'arial.ttf'
-else:
-    font = 'DejaVuSansMono.ttf'
+from layout import load_theme_font
 
-def load_font(size):
-    try:
-        return ImageFont.truetype(font, size)
-    except OSError:
-        return ImageFont.load_default()
 
-def create_ascii_pic0(game_id, title):
-    pic0 = Image.new("RGBA", (250, 140), (255,255,255,0))
-    fnt = load_font(12)
-    d = ImageDraw.Draw(pic0)
+ASCII_LEVELS = ("W", "#", "%", "?", "*", "+", ";", ":", ",", ".", " ")
 
-    off = 80
-    y = 1
-    t = '##############################'
-    ts = d.textsize(t, font=fnt)
-    d.text((off, y), t, font=fnt, fill=(128,255,128,255))
-    y = y + ts[1] + 2
-    
-    strings = title.split(' - ')
-    for t in strings:
-        ts = d.textsize('#', font=fnt)
-        d.text((off, y), '#', font=fnt, fill=(128,255,128,255))
-        
-        ts = d.textsize(t, font=fnt)
-        d.text((off + 12, y), t, font=fnt,
-               fill=(0,0,0,255))
-        d.text((off + 11, y - 1), t, font=fnt,
-               fill=(255,255,255,255))
-        y = y + ts[1] + 2
 
-    t = '##############################'
-    ts = d.textsize(t, font=fnt)
-    d.text((off, y), t, font=fnt, fill=(128,255,128,255))
+def create_ascii_title(title):
+    title_image = Image.new("RGBA", (250, 140), (255, 255, 255, 0))
+    font = load_theme_font(12)
+    drawing = ImageDraw.Draw(title_image)
+    horizontal_offset = 80
+    line_y = 1
+    border = "##############################"
 
-    pic0 = pic0.resize((1000,560), Image.Resampling.NEAREST)
-    return pic0
+    def text_height(text):
+        box = drawing.textbbox((0, 0), text, font=font)
+        return box[3] - box[1]
 
-def create_ascii_pic1(game_id, icon0):
-    AC = ["W", "#", "%", "?", "*", "+", ";", ":", ",", ".", " "]
-    icon0 = icon0.convert("L").resize((120,120), Image.Resampling.BILINEAR)
-    pic1 = Image.new("RGB", (1920, 1080), (0,0,0))
-    fnt = load_font(12)
-    d = ImageDraw.Draw(pic1)
-    for i in range(120):
-        for j in range(120):
-            p = icon0.getpixel((i,j))
-            d.text((210 + i * 9, j * 9), AC[10 - p//25], font=fnt,
-                   fill=(192,192,192,255))
+    drawing.text(
+        (horizontal_offset, line_y),
+        border,
+        font=font,
+        fill=(128, 255, 128, 255),
+    )
+    line_y += text_height(border) + 2
+    for title_line in title.split(" - "):
+        drawing.text(
+            (horizontal_offset, line_y),
+            "#",
+            font=font,
+            fill=(128, 255, 128, 255),
+        )
+        drawing.text(
+            (horizontal_offset + 12, line_y),
+            title_line,
+            font=font,
+            fill=(0, 0, 0, 255),
+        )
+        drawing.text(
+            (horizontal_offset + 11, line_y - 1),
+            title_line,
+            font=font,
+            fill=(255, 255, 255, 255),
+        )
+        line_y += text_height(title_line) + 2
+    drawing.text(
+        (horizontal_offset, line_y),
+        border,
+        font=font,
+        fill=(128, 255, 128, 255),
+    )
+    return title_image.resize((1000, 560), Image.Resampling.NEAREST)
 
-    return pic1
-    
+
+def create_ascii_background(icon, _temporary_path=None):
+    grayscale = icon.convert("L").resize((120, 120), Image.Resampling.BILINEAR)
+    background = Image.new("RGB", (1920, 1080), (0, 0, 0))
+    font = load_theme_font(12)
+    drawing = ImageDraw.Draw(background)
+    for x_position in range(120):
+        for y_position in range(120):
+            intensity = grayscale.getpixel((x_position, y_position))
+            character = ASCII_LEVELS[10 - intensity // 25]
+            drawing.text(
+                (210 + x_position * 9, y_position * 9),
+                character,
+                font=font,
+                fill=(192, 192, 192, 255),
+            )
+    return background
