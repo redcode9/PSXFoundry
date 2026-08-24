@@ -5,8 +5,7 @@
     <customwidgets />
   </project>
   <object class="ttk.Frame" id="top_frame">
-    <property name="height">200</property>
-    <property name="width">200</property>
+    <property name="padding">4</property>
     <layout manager="grid">
       <property name="column">0</property>
       <property name="row">0</property>
@@ -14,15 +13,12 @@
     </layout>
     <child>
       <object class="ttk.Frame" id="images">
-        <property name="height">200</property>
-        <property name="width">200</property>
         <layout manager="grid">
           <property name="column">1</property>
-          <property name="padx">10</property>
-          <property name="pady">5</property>
-          <property name="row">0</property>
-          <property name="rowspan">2</property>
-          <property name="sticky">nsew</property>
+          <property name="padx">6 12</property>
+          <property name="pady">0 12</property>
+          <property name="row">1</property>
+          <property name="sticky">ew</property>
         </layout>
         <child>
           <object class="ttk.Frame" id="icon0">
@@ -124,23 +120,23 @@
       </object>
     </child>
     <child>
-      <object class="ttk.Frame" id="outputpkg">
-        <property name="height">200</property>
-        <property name="width">200</property>
+      <object class="ttk.Labelframe" id="outputpkg">
+        <property name="padding">10</property>
+        <property name="text" translatable="yes">4. Destination</property>
         <layout manager="grid">
           <property name="column">0</property>
-          <property name="columnspan">1</property>
-          <property name="padx">10</property>
-          <property name="pady">5</property>
-          <property name="row">3</property>
-          <property name="sticky">nsew</property>
+          <property name="columnspan">2</property>
+          <property name="padx">12</property>
+          <property name="pady">8</property>
+          <property name="row">2</property>
+          <property name="sticky">ew</property>
         </layout>
         <child>
           <object class="ttk.Label" id="label15">
             <property name="text" translatable="yes">Directory</property>
             <layout manager="grid">
               <property name="column">0</property>
-              <property name="row">6</property>
+              <property name="row">0</property>
               <property name="sticky">w</property>
             </layout>
           </object>
@@ -152,8 +148,8 @@
             <bind sequence="&lt;&lt;PathChooserPathChanged&gt;&gt;" handler="on_dir_changed" add="" />
             <layout manager="grid">
               <property name="column">1</property>
-              <property name="row">6</property>
-              <property name="sticky">w</property>
+              <property name="row">0</property>
+              <property name="sticky">ew</property>
             </layout>
           </object>
         </child>
@@ -162,7 +158,8 @@
             <property name="text" translatable="yes">Pkg File</property>
             <layout manager="grid">
               <property name="column">0</property>
-              <property name="row">7</property>
+              <property name="padx">16 6</property>
+              <property name="row">0</property>
             </layout>
           </object>
         </child>
@@ -171,19 +168,20 @@
             <property name="text" translatable="yes">game.pkg</property>
             <property name="textvariable">string:pkgfile_variable</property>
             <layout manager="grid">
-              <property name="column">1</property>
-              <property name="row">7</property>
-              <property name="sticky">w</property>
+              <property name="column">3</property>
+              <property name="row">0</property>
+              <property name="sticky">ew</property>
             </layout>
           </object>
         </child>
         <child>
           <object class="ttk.Label" id="label17">
-            <property name="text" translatable="yes">Output Directory/File:</property>
+            <property name="text" translatable="yes">Choose where the finished package will be saved.</property>
             <layout manager="grid">
               <property name="column">0</property>
-              <property name="columnspan">2</property>
-              <property name="row">5</property>
+              <property name="columnspan">4</property>
+              <property name="pady">0 8</property>
+              <property name="row">1</property>
               <property name="sticky">w</property>
             </layout>
           </object>
@@ -192,14 +190,12 @@
     </child>
     <child>
       <object class="ttk.Frame" id="frame2">
-        <property name="height">200</property>
-        <property name="width">200</property>
         <layout manager="grid">
           <property name="column">0</property>
-          <property name="columnspan">3</property>
-          <property name="padx">10</property>
-          <property name="pady">5</property>
-          <property name="row">5</property>
+          <property name="columnspan">2</property>
+          <property name="padx">12</property>
+          <property name="pady">8</property>
+          <property name="row">4</property>
           <property name="sticky">ew</property>
         </layout>
         <child>
@@ -214,8 +210,18 @@
         <child>
           <object class="ttk.Button" id="button2">
             <property name="command" type="command" cbtype="simple">on_reset</property>
-            <property name="text" translatable="yes">Clear</property>
+            <property name="text" translatable="yes">Reset</property>
             <layout manager="pack">
+              <property name="side">left</property>
+            </layout>
+          </object>
+        </child>
+        <child>
+          <object class="ttk.Button" id="advanced_button">
+            <property name="command" type="command" cbtype="simple">on_toggle_advanced</property>
+            <property name="text" translatable="yes">Advanced settings</property>
+            <layout manager="pack">
+              <property name="padx">8</property>
               <property name="side">left</property>
             </layout>
           </object>
@@ -235,18 +241,18 @@
     </child>
     <child>
       <object class="ttk.Frame" id="frame1">
-        <property name="height">200</property>
-        <property name="width">200</property>
         <layout manager="grid">
           <property name="column">0</property>
-          <property name="padx">10</property>
+          <property name="padx">12 6</property>
+          <property name="pady">12</property>
           <property name="row">0</property>
-          <property name="sticky">nsew</property>
+          <property name="rowspan">2</property>
+          <property name="sticky">new</property>
         </layout>
         <child>
-          <object class="ttk.Frame" id="discs">
-            <property name="height">200</property>
-            <property name="width">200</property>
+          <object class="ttk.Labelframe" id="discs">
+            <property name="padding">10</property>
+            <property name="text" translatable="yes">1. Game files</property>
             <layout manager="grid">
               <property name="column">0</property>
               <property name="row">0</property>
@@ -318,7 +324,7 @@
             </child>
             <child>
               <object class="ttk.Label" id="label1">
-                <property name="text" translatable="yes">Discs:</property>
+              <property name="text" translatable="yes">Add disc images in play order.</property>
                 <layout manager="grid">
                   <property name="column">0</property>
                   <property name="row">0</property>
@@ -379,9 +385,9 @@
           </object>
         </child>
         <child>
-          <object class="ttk.Frame" id="nameofgame">
-            <property name="height">200</property>
-            <property name="width">200</property>
+          <object class="ttk.Labelframe" id="nameofgame">
+            <property name="padding">10</property>
+            <property name="text" translatable="yes">2. Game details</property>
             <layout manager="grid">
               <property name="column">0</property>
               <property name="pady">10</property>
@@ -410,7 +416,7 @@
             </child>
             <child>
               <object class="ttk.Label" id="label13">
-                <property name="text" translatable="yes">SND0:</property>
+                <property name="text" translatable="yes">Preview audio:</property>
                 <layout manager="grid">
                   <property name="column">0</property>
                   <property name="row">2</property>
@@ -431,7 +437,7 @@
             <child>
               <object class="ttk.Button" id="youtube_button">
                 <property name="command" type="command" cbtype="simple">on_youtube_audio</property>
-                <property name="text" translatable="yes">Try to find Audio on YouTube</property>
+                <property name="text" translatable="yes">Find preview audio online</property>
                 <layout manager="grid">
                   <property name="column">1</property>
                   <property name="row">3</property>
@@ -493,21 +499,23 @@
       </object>
     </child>
     <child>
-      <object class="ttk.Frame" id="options">
-        <property name="height">200</property>
-        <property name="width">200</property>
+      <object class="ttk.Labelframe" id="options">
+        <property name="padding">10</property>
+        <property name="text" translatable="yes">Advanced settings</property>
         <layout manager="grid">
-          <property name="column">1</property>
+          <property name="column">0</property>
           <property name="columnspan">2</property>
+          <property name="padx">12</property>
+          <property name="pady">8</property>
           <property name="row">3</property>
-          <property name="sticky">nsew</property>
+          <property name="sticky">ew</property>
         </layout>
         <child>
           <object class="ttk.Checkbutton" id="disable_pic0">
             <property name="command" type="command" cbtype="simple">on_pic0_disabled</property>
             <property name="offvalue">off</property>
             <property name="onvalue">on</property>
-            <property name="text" translatable="yes">Disable PIC0</property>
+            <property name="text" translatable="yes">Hide game logo (PIC0)</property>
             <property name="variable">string:pic0_disabled_variable</property>
             <layout manager="grid">
               <property name="column">0</property>
@@ -521,7 +529,7 @@
             <property name="command" type="command" cbtype="simple">on_pic1_from_bc</property>
             <property name="offvalue">off</property>
             <property name="onvalue">on</property>
-            <property name="text" translatable="yes">Use back cover as PIC1</property>
+            <property name="text" translatable="yes">Use back cover as background</property>
             <property name="variable">string:bc_for_pic1_variable</property>
             <layout manager="grid">
               <property name="column">1</property>
@@ -535,7 +543,7 @@
             <property name="command" type="command" cbtype="simple">on_icon0_from_disc</property>
             <property name="offvalue">off</property>
             <property name="onvalue">on</property>
-            <property name="text" translatable="yes">Use disc scan as ICON0</property>
+            <property name="text" translatable="yes">Use disc scan as game icon</property>
             <property name="variable">string:disc_as_icon0_variable</property>
             <layout manager="grid">
               <property name="column">1</property>
@@ -549,7 +557,7 @@
             <property name="command" type="command" cbtype="simple">on_data_track_only</property>
             <property name="offvalue">off</property>
             <property name="onvalue">on</property>
-            <property name="text" translatable="yes">Only encode the data track</property>
+            <property name="text" translatable="yes">Skip raw audio tracks</property>
             <property name="variable">string:data_track_only_variable</property>
             <layout manager="grid">
               <property name="column">1</property>
@@ -563,7 +571,7 @@
             <property name="command" type="command" cbtype="simple">on_pic1_disabled</property>
             <property name="offvalue">off</property>
             <property name="onvalue">on</property>
-            <property name="text" translatable="yes">Disable PIC1</property>
+            <property name="text" translatable="yes">Hide background image (PIC1)</property>
             <property name="variable">string:pic1_disabled_variable</property>
             <layout manager="grid">
               <property name="column">0</property>
@@ -577,7 +585,7 @@
             <property name="command" type="command" cbtype="simple">on_force_ntsc</property>
             <property name="offvalue">off</property>
             <property name="onvalue">on</property>
-            <property name="text" translatable="yes">Force NTSC</property>
+            <property name="text" translatable="yes">Force 60 Hz output</property>
             <property name="variable">string:force_ntsc_variable</property>
             <layout manager="grid">
               <property name="column">2</property>
@@ -591,7 +599,7 @@
             <property name="command" type="command" cbtype="simple">on_force_newemu</property>
             <property name="offvalue">off</property>
             <property name="onvalue">on</property>
-            <property name="text" translatable="yes">Force ps1_newemu</property>
+            <property name="text" translatable="yes">Use the newer PS1 emulator</property>
             <property name="variable">string:force_newemu_variable</property>
             <layout manager="grid">
               <property name="column">2</property>
@@ -605,7 +613,7 @@
             <property name="command" type="command" cbtype="simple">on_snd0_disabled</property>
             <property name="offvalue">off</property>
             <property name="onvalue">on</property>
-            <property name="text" translatable="yes">Disable SND0</property>
+            <property name="text" translatable="yes">Mute XMB preview audio</property>
             <property name="variable">string:snd0_disabled_variable</property>
             <layout manager="grid">
               <property name="column">0</property>
@@ -619,7 +627,7 @@
             <property name="command" type="command" cbtype="simple">on_allow_swapdisc</property>
             <property name="offvalue">off</property>
             <property name="onvalue">on</property>
-            <property name="text" translatable="yes">Enable swap-disc</property>
+            <property name="text" translatable="yes">Allow manual disc changes</property>
             <property name="variable">string:allow_discswap_variable</property>
             <layout manager="grid">
               <property name="column">3</property>
@@ -633,7 +641,7 @@
             <property name="command" type="command" cbtype="simple">on_psx_undither</property>
             <property name="offvalue">off</property>
             <property name="onvalue">on</property>
-            <property name="text" translatable="yes">Use PSX-Undither</property>
+            <property name="text" translatable="yes">Reduce color dithering</property>
             <property name="variable">string:psx_undither_variable</property>
             <layout manager="grid">
               <property name="column">3</property>
@@ -645,12 +653,15 @@
       </object>
     </child>
     <child>
-      <object class="ttk.Frame" id="frame3">
-        <property name="height">200</property>
-        <property name="width">200</property>
+      <object class="ttk.Labelframe" id="frame3">
+        <property name="padding">10</property>
+        <property name="text" translatable="yes">3. Preview</property>
         <layout manager="grid">
-          <property name="column">2</property>
+          <property name="column">1</property>
+          <property name="padx">6 12</property>
+          <property name="pady">12 6</property>
           <property name="row">0</property>
+          <property name="sticky">new</property>
         </layout>
         <child>
           <object class="ttk.Frame" id="preview">
@@ -662,7 +673,7 @@
             </layout>
             <child>
               <object class="ttk.Label" id="label2">
-                <property name="text" translatable="yes">Preview:</property>
+                <property name="text" translatable="yes">XMB preview</property>
                 <layout manager="grid">
                   <property name="column">0</property>
                   <property name="row">0</property>
@@ -696,7 +707,7 @@
             </layout>
             <child>
               <object class="ttk.Label" id="label5">
-                <property name="text" translatable="yes">PIC0 Scale:</property>
+                <property name="text" translatable="yes">Logo size:</property>
                 <layout manager="grid">
                   <property name="column">0</property>
                   <property name="row">0</property>
@@ -728,7 +739,7 @@
             </layout>
             <child>
               <object class="ttk.Label" id="label6">
-                <property name="text" translatable="yes">PIC0 X-Shift:</property>
+                <property name="text" translatable="yes">Horizontal position:</property>
                 <layout manager="grid">
                   <property name="column">0</property>
                   <property name="row">0</property>
@@ -760,7 +771,7 @@
             </layout>
             <child>
               <object class="ttk.Label" id="label8">
-                <property name="text" translatable="yes">PIC0 Y-Shift:</property>
+                <property name="text" translatable="yes">Vertical position:</property>
                 <layout manager="grid">
                   <property name="column">0</property>
                   <property name="row">0</property>

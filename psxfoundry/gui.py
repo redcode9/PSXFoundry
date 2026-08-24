@@ -2,14 +2,18 @@
 
 from __future__ import annotations
 
+import io
 from pathlib import Path
 import queue
+import re
 import sys
 import threading
 import tkinter as tk
-from tkinter import messagebox
+from tkinter import filedialog, messagebox
 import tkinter.ttk as ttk
 import traceback
+
+from PIL import Image
 
 from popfe_runtime import RuntimePaths
 from psxfoundry.registry import CompatibilityAssetError
@@ -138,6 +142,52 @@ def clear_temporary_paths(paths, *, verbose=False):
                 pass
         except FileNotFoundError:
             pass
+
+
+def label_path_chooser(chooser, text="Choose..."):
+    chooser.folder_button.configure(text=text, width=max(8, len(text)))
+
+
+def choose_image(parent, title):
+    path = filedialog.askopenfilename(
+        parent=parent,
+        title=title,
+        filetypes=(
+            ('Image files', '*.png *.PNG *.jpg *.JPG'),
+            ('All files', '*'),
+        ),
+    )
+    if not path or not Path(path).is_file():
+        return None, None
+    return path, Image.open(path)
+
+
+def load_dropped_image(value, fetch):
+    try:
+        if Path(value).is_file():
+            return Image.open(value)
+    except (OSError, ValueError):
+        pass
+
+    match = re.search(r'src=["\']([^"\']+)', value)
+    if not match:
+        return None
+    try:
+        response = fetch(match.group(1), stream=True)
+    except Exception:
+        return None
+    if response.status_code != 200:
+        return None
+    return Image.open(io.BytesIO(response.content))
+
+
+def render_image_preview(image, size, output_path, canvas, temporary_paths):
+    temporary_paths.append(str(output_path))
+    image.resize(size, Image.Resampling.HAMMING).save(output_path)
+    preview = tk.PhotoImage(file=output_path)
+    canvas.delete('all')
+    canvas.create_image(0, 0, image=preview, anchor='nw')
+    return preview
 
 
 def find_preview_audio_url(title, search):

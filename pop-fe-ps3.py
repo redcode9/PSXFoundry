@@ -2,27 +2,25 @@
 
 import argparse
 from dataclasses import dataclass
-import datetime
-import io
 import os
 import pygubu
 import pygubu.widgets.simpletooltip as tooltip
-import re
 import requests
 import shutil
-import subprocess
 import tkinter as tk
-import tkinter.ttk as ttk
-from tkinterdnd2 import *
-import zipfile
+from tkinterdnd2 import DND_FILES, TkinterDnD
 from pathlib import Path
 from psxfoundry.gui import (
     CompletionDialog,
     ConversionTask,
     build_plan_with_missing_fix_prompt,
+    choose_image,
     clear_temporary_paths,
     find_preview_audio_url,
     install_tk_error_handler,
+    label_path_chooser,
+    load_dropped_image,
+    render_image_preview,
     show_conversion_error,
 )
 from popfe_runtime import runtime as popfe_runtime
@@ -42,15 +40,13 @@ except:
     True
 
 from PIL import Image, ImageDraw
-from bchunk import bchunk
-import importlib  
+import importlib
 from gamedb import games, themes
 from layout import image_has_transparency
 try:
     import popfe
 except:
     popfe = importlib.import_module("pop-fe")
-from cue import parse_ccd, ccd2cue, write_cue
 
 verbose = False
 temp_files = []
@@ -124,6 +120,7 @@ class Ps3App:
         self.manual = None
         self.conversion_plan = None
         self.conversion_task = None
+        self.advanced_visible = False
         self.analysis_cache = AnalysisCache(
             popfe_runtime.cache_dir / 'psxfoundry' / 'analysis'
         )
@@ -139,71 +136,10 @@ class Ps3App:
         builder.add_from_file(PROJECT_UI)
         self.mainwindow = builder.get_object("top_frame", master)
 
-        callbacks = {
-            'on_icon0_clicked': self.on_icon0_clicked,
-            'on_icon0_dropped': self.on_icon0_dropped,
-            'on_icon0_from_disc': self.on_icon0_from_disc,
-            'on_pic0_clicked': self.on_pic0_clicked,
-            'on_pic0_dropped': self.on_pic0_dropped,
-            'on_pic0_disabled': self.on_pic0_disabled,
-            'on_pic1_clicked': self.on_pic1_clicked,
-            'on_pic1_dropped': self.on_pic1_dropped,
-            'on_pic1_disabled': self.on_pic1_disabled,
-            'on_pic1_from_bc': self.on_pic1_from_bc,
-            'on_snd0_disabled': self.on_snd0_disabled,
-            'on_path_changed': self.on_path_changed,
-            'on_dir_changed': self.on_dir_changed,
-            'on_youtube_audio': self.on_youtube_audio,
-            'on_create_pkg': self.on_create_pkg,
-            'on_reset': self.on_reset,
-            'on_theme_selected': self.on_theme_selected,
-            'on_data_track_only': self.on_data_track_only,
-            'on_force_ntsc': self.on_force_ntsc,
-            'on_force_newemu': self.on_force_newemu,
-            'on_allow_swapdisc': self.on_allow_swapdisc,
-            'on_psx_undither': self.on_psx_undither,
-            'on_pic0_scaling': self.on_pic0_scaling,
-            'on_pic0_xoffset': self.on_pic0_xoffset,
-            'on_pic0_yoffset': self.on_pic0_yoffset,
-        }
-
-        builder.connect_callbacks(callbacks)
-        c = self.builder.get_object('icon0_canvas', self.master)
-        c.drop_target_register(DND_FILES)
-        c.dnd_bind('<<Drop>>', self.on_icon0_dropped)
-        c = self.builder.get_object('pic0_canvas', self.master)
-        c.drop_target_register(DND_FILES)
-        c.dnd_bind('<<Drop>>', self.on_pic0_dropped)
-        c = self.builder.get_object('pic1_canvas', self.master)
-        c.drop_target_register(DND_FILES)
-        c.dnd_bind('<<Drop>>', self.on_pic1_dropped)
-
-        self.use_psx_undither = builder.get_object("use_psx_undither")
-        tooltip.create(self.use_psx_undither, "Use PSX-Undither to patch the game.\nThis will remove dithering effects.")
-        self.allow_swapdisc = builder.get_object("allow_swapdisc")
-        tooltip.create(self.allow_swapdisc, "Allow swapping disks even if the game is not requesting it.\nThis is only needed on a handful of games that do not\nuse the normal way to handle multi-discs.")
-        self.force_newemu = builder.get_object("force_newemu")
-        tooltip.create(self.force_newemu , "Use ps1_newemu instead of ps1_netemu.\nEnable only for a known compatibility requirement.")
-        self.force_ntsc = builder.get_object("force_ntsc")
-        tooltip.create(self.force_ntsc , "Force the emulator to NTSC. This can cause the game to run\nat the wrong speed when used on a PAL console.")
-        self.disc_as_icon0 = builder.get_object("disc_as_icon0")
-        tooltip.create(self.disc_as_icon0 , "Use a scan of the disc as the icon")
-        self.pic1_as_background = builder.get_object("pic1_as_background")
-        tooltip.create(self.pic1_as_background , "Use the back of the game box as the background image")
-        dto = builder.get_object("data_track_only")
-        tooltip.create(dto , "Only encode the data track and skip all CDDA tracks\nwhen creating the EBOOT.\nThis makes the EBOOT smaller but you can no longer convert the EBOOT back into a BIN/CUE file.\nMusic will still work since it is always converted to ATRAC3.\n")
-        self.disable_snd0 = builder.get_object("disable_snd0")
-        tooltip.create(self.disable_snd0 , "Disable the SND0 audio that would play when the game icon is\nhighlighted on the XMB")
-        self.disable_pic1 = builder.get_object("disable_pic1")
-        tooltip.create(self.disable_pic1 , "Disable the background image shown when the game icon is highlighted on the XMB")
-        self.disable_pic0 = builder.get_object("disable_pic0")
-        tooltip.create(self.disable_pic0 , "Disable the game logo shown when the game icon is highlighted on the XMB")
-        self.pic0scaling = builder.get_object("pic0scaling")
-        tooltip.create(self.pic0scaling , "Change the scaling of the game logo.\n1.0 is 100% of original.\n0.5 is 50%, etc.")
-        self.pic0xoffset = builder.get_object("pic0xoffset")
-        tooltip.create(self.pic0xoffset , "Shift the placement of pic0 horizontally.\n0.1 means shift 10% to the right.\n-0.1 means shift 10% to the left.\nThe resulting image is bounded by the maximum size of the pic0 box.")
-        self.pic0yoffset = builder.get_object("pic0yoffset")
-        tooltip.create(self.pic0yoffset , "Shift the placement of pic0 vertically.\n0.1 means shift 10% down.\n-0.1 means shift 10% up.\nThe resulting image is bounded by the maximum size of the pic0 box.")
+        builder.connect_callbacks(self)
+        self._configure_layout()
+        self._configure_drop_targets()
+        self._configure_tooltips()
         self._theme = ''
         o = ['']
         for theme in themes:
@@ -215,9 +151,112 @@ class Ps3App:
         except:
             True
 
+    def _configure_drop_targets(self):
+        targets = (
+            ('icon0_canvas', self.on_icon0_dropped),
+            ('pic0_canvas', self.on_pic0_dropped),
+            ('pic1_canvas', self.on_pic1_dropped),
+        )
+        for object_id, handler in targets:
+            canvas = self.builder.get_object(object_id, self.master)
+            canvas.drop_target_register(DND_FILES)
+            canvas.dnd_bind('<<Drop>>', handler)
+
+    def _configure_tooltips(self):
+        descriptions = {
+            'use_psx_undither': 'Reduce dithering in supported games.',
+            'allow_swapdisc': 'Allow disc changes before a game requests one.',
+            'force_newemu': 'Use ps1_newemu for a known compatibility need.',
+            'force_ntsc': 'Force 60 Hz; PAL games may run at the wrong speed.',
+            'disc_as_icon0': 'Use the disc scan as the game icon.',
+            'pic1_as_background': 'Use the back cover as the background.',
+            'data_track_only': 'Skip raw CD audio tracks to reduce output size.',
+            'disable_snd0': 'Remove preview audio from the XMB.',
+            'disable_pic1': 'Remove the XMB background image.',
+            'disable_pic0': 'Remove the XMB game logo.',
+            'pic0scaling': 'Set the game logo size; 1.0 is original size.',
+            'pic0xoffset': 'Move the game logo horizontally.',
+            'pic0yoffset': 'Move the game logo vertically.',
+        }
+        for object_id, description in descriptions.items():
+            tooltip.create(
+                self.builder.get_object(object_id, self.master), description
+            )
+
     def __del__(self):
         global temp_files
         clear_temporary_paths(temp_files, verbose=verbose)
+
+    def _configure_layout(self):
+        self.mainwindow.columnconfigure(0, weight=1, uniform='content')
+        self.mainwindow.columnconfigure(1, weight=1, uniform='content')
+        for separator_id in ('separator3', 'separator5'):
+            self.builder.get_object(separator_id, self.master).grid_remove()
+
+        source = self.builder.get_object('frame1', self.master)
+        source.grid_configure(sticky='new')
+        source.columnconfigure(0, weight=1)
+        for section_id in ('discs', 'nameofgame', 'theme_frame'):
+            section = self.builder.get_object(section_id, self.master)
+            section.grid_configure(sticky='ew')
+            section.columnconfigure(1, weight=1)
+
+        discs = self.builder.get_object('discs', self.master)
+        discs.columnconfigure(0, weight=1)
+        for index in range(1, 6):
+            chooser = self.builder.get_object(
+                f'disc{index}', self.master
+            )
+            chooser.grid_configure(sticky='ew', pady=2)
+            label_path_chooser(chooser, 'Choose disc...')
+
+        for object_id, text in (
+            ('snd0', 'Choose audio...'),
+            ('manual', 'Choose manual...'),
+            ('pathchooserinput1', 'Choose folder...'),
+        ):
+            chooser = self.builder.get_object(object_id, self.master)
+            chooser.grid_configure(sticky='ew')
+            label_path_chooser(chooser, text)
+
+        for label_id in ('label9', 'label13', 'label7', 'label3'):
+            self.builder.get_object(label_id, self.master).configure(
+                anchor='e', width=14
+            )
+        self.builder.get_object('theme', self.master).configure(
+            state='readonly'
+        )
+
+        preview = self.builder.get_object('frame3', self.master)
+        preview.grid_configure(sticky='new')
+        preview.columnconfigure(0, weight=1)
+
+        images = self.builder.get_object('images', self.master)
+        images.grid_configure(sticky='ew')
+        for column, object_id in enumerate(('icon0', 'pic0', 'pic1')):
+            images.columnconfigure(column, weight=1, uniform='artwork')
+            self.builder.get_object(
+                object_id, self.master
+            ).grid_configure(row=0, column=column, padx=6)
+
+        output = self.builder.get_object('outputpkg', self.master)
+        output.columnconfigure(1, weight=1)
+        output.columnconfigure(3, weight=1)
+        self.builder.get_object('entry4', self.master).grid_configure(
+            sticky='ew'
+        )
+        self.builder.get_object('options', self.master).grid_remove()
+
+    def on_toggle_advanced(self):
+        panel = self.builder.get_object('options', self.master)
+        button = self.builder.get_object('advanced_button', self.master)
+        if self.advanced_visible:
+            panel.grid_remove()
+            button.configure(text='Advanced settings')
+        else:
+            panel.grid()
+            button.configure(text='Hide advanced settings')
+        self.advanced_visible = not self.advanced_visible
         temp_files = []
 
     def update_prefs(self):
@@ -566,171 +605,52 @@ class Ps3App:
     def on_icon0_dropped(self, event):
         self.master.config(cursor='watch')
         self.master.update()
-        # try to open it as a file
-        self.icon0_tk = None
-        try:
-            os.stat(event.data)
-            self.icon0 = Image.open(event.data)
-        except:
-            self.icon0 = None
-        # if that failed, check if it was a link
-        if not self.icon0:
-            try:
-                _s = event.data
-                _p = _s.find('src="')
-                if _p < 0:
-                    raise Exception('Not a HTTP link')
-                _s = _s[_p + 5:]
-                _p = _s.find('"')
-                if _p < 0:
-                    raise Exception('Not a HTTP link')
-                _s = _s[:_p]
-                ret = requests.get(_s, stream=True)
-                if ret.status_code != 200:
-                    raise Exception('Failed to fetch file ', _s)
-                self.icon0 = Image.open(io.BytesIO(ret.content))
-            except:
-                True
-
+        image = load_dropped_image(event.data, requests.get)
         self.master.config(cursor='')
-        if not self.icon0:
-            return
-        temp_files.append(self.subdir + 'ICON0.PNG')
-        self.icon0.resize((80,80), Image.Resampling.HAMMING).save(self.subdir + 'ICON0.PNG')
-        self.icon0_tk = tk.PhotoImage(file = self.subdir + 'ICON0.PNG')
-        c = self.builder.get_object('icon0_canvas', self.master)
-        c.create_image(0, 0, image=self.icon0_tk, anchor='nw')
-        self.update_preview()
+        self._set_artwork_image('icon0', image)
         
     def on_icon0_clicked(self, event):
-        filetypes = [
-            ('Image files', ['.png', '.PNG', '.jpg', '.JPG']),
-            ('All Files', ['*.*', '*'])]
-        path = tk.filedialog.askopenfilename(title='Select image for COVER',filetypes=filetypes)
-        try:
-            os.stat(path)
-            self.icon0 = Image.open(path)
-        except:
-            return
-        temp_files.append(self.subdir + 'ICON0.PNG')
-        self.icon0.resize((80,80), Image.Resampling.HAMMING).save(self.subdir + 'ICON0.PNG')
-        self.icon0_tk = tk.PhotoImage(file = self.subdir + 'ICON0.PNG')
-        c = self.builder.get_object('icon0_canvas', self.master)
-        c.create_image(0, 0, image=self.icon0_tk, anchor='nw')
-        self.update_preview()
+        _, image = choose_image(self.master, 'Select image for ICON0')
+        self._set_artwork_image('icon0', image)
 
     def on_pic0_dropped(self, event):
         self.master.config(cursor='watch')
         self.master.update()
-        # try to open it as a file
-        self.pic0_tk = None
-        try:
-            os.stat(event.data)
-            self.pic0 = Image.open(event.data)
-        except:
-            self.pic0 = None
-        # if that failed, check if it was a link
-        if not self.pic0:
-            try:
-                _s = event.data
-                _p = _s.find('src="')
-                if _p < 0:
-                    raise Exception('Not a HTTP link')
-                _s = _s[_p + 5:]
-                _p = _s.find('"')
-                if _p < 0:
-                    raise Exception('Not a HTTP link')
-                _s = _s[:_p]
-                ret = requests.get(_s, stream=True)
-                if ret.status_code != 200:
-                    raise Exception('Failed to fetch file ', _s)
-                self.pic0 = Image.open(io.BytesIO(ret.content))
-            except:
-                True
-
+        image = load_dropped_image(event.data, requests.get)
         self.master.config(cursor='')
-        if not self.pic0:
-            return
-        temp_files.append(self.subdir + 'PIC0.PNG')
-        self.pic0.resize((128,80), Image.Resampling.HAMMING).save(self.subdir + 'PIC0.PNG')
-        self.pic0_tk = tk.PhotoImage(file = self.subdir + 'PIC0.PNG')
-        c = self.builder.get_object('pic0_canvas', self.master)
-        c.create_image(0, 0, image=self.pic0_tk, anchor='nw')
-        self.update_preview()
+        self._set_artwork_image('pic0', image)
         
     def on_pic0_clicked(self, event):
-        filetypes = [
-            ('Image files', ['.png', '.PNG', '.jpg', '.JPG']),
-            ('All Files', ['*.*', '*'])]
-        path = tk.filedialog.askopenfilename(title='Select image for PIC0',filetypes=filetypes)
-        try:
-            os.stat(path)
-            self.pic0 = Image.open(path)
-            self.pic0_orig = Image.open(path)
-            self.pic0_path = path
-        except:
-            return
-        temp_files.append(self.subdir + 'PIC0.PNG')
-        self.pic0.resize((128,80), Image.Resampling.HAMMING).save(self.subdir + 'PIC0.PNG')
-        self.pic0_tk = tk.PhotoImage(file = self.subdir + 'PIC0.PNG')
-        c = self.builder.get_object('pic0_canvas', self.master)
-        c.create_image(0, 0, image=self.pic0_tk, anchor='nw')
-        self.update_preview()
+        path, image = choose_image(self.master, 'Select image for PIC0')
+        self.pic0_path = path
+        self._set_artwork_image('pic0', image)
 
     def on_pic1_dropped(self, event):
         self.master.config(cursor='watch')
         self.master.update()
-        # try to open it as a file
-        self.pic1_tk = None
-        try:
-            os.stat(event.data)
-            self.pic1 = Image.open(event.data)
-        except:
-            self.pic1 = None
-        # if that failed, check if it was a link
-        if not self.pic1:
-            try:
-                _s = event.data
-                _p = _s.find('src="')
-                if _p < 0:
-                    raise Exception('Not a HTTP link')
-                _s = _s[_p + 5:]
-                _p = _s.find('"')
-                if _p < 0:
-                    raise Exception('Not a HTTP link')
-                _s = _s[:_p]
-                ret = requests.get(_s, stream=True)
-                if ret.status_code != 200:
-                    raise Exception('Failed to fetch file ', _s)
-                self.pic1 = Image.open(io.BytesIO(ret.content))
-            except:
-                True
-
+        image = load_dropped_image(event.data, requests.get)
         self.master.config(cursor='')
-        if not self.pic1:
-            return
-        temp_files.append(self.subdir + 'PIC1.PNG')
-        self.pic1.resize((128,80), Image.Resampling.HAMMING).save(self.subdir + 'PIC1.PNG')
-        self.pic1_tk = tk.PhotoImage(file = self.subdir + 'PIC1.PNG')
-        c = self.builder.get_object('pic1_canvas', self.master)
-        c.create_image(0, 0, image=self.pic1_tk, anchor='nw')
-        self.update_preview()
+        self._set_artwork_image('pic1', image)
         
     def on_pic1_clicked(self, event):
-        filetypes = [
-            ('Image files', ['.png', '.PNG', '.jpg', '.JPG']),
-            ('All Files', ['*.*', '*'])]
-        path = tk.filedialog.askopenfilename(title='Select image for PIC1',filetypes=filetypes)
-        try:
-            os.stat(path)
-            self.pic1 = Image.open(path)
-        except:
+        _, image = choose_image(self.master, 'Select image for PIC1')
+        self._set_artwork_image('pic1', image)
+
+    def _set_artwork_image(self, name, image):
+        if image is None:
             return
-        temp_files.append(self.subdir + 'PIC1.PNG')
-        self.pic1.resize((128,80), Image.Resampling.HAMMING).save(self.subdir + 'PIC1.PNG')
-        self.pic1_tk = tk.PhotoImage(file = self.subdir + 'PIC1.PNG')
-        c = self.builder.get_object('pic1_canvas', self.master)
-        c.create_image(0, 0, image=self.pic1_tk, anchor='nw')
+        setattr(self, name, image)
+        if name == 'pic0':
+            self.pic0_orig = image.copy()
+        size = (80, 80) if name == 'icon0' else (128, 80)
+        preview = render_image_preview(
+            image,
+            size,
+            self.subdir + name.upper() + '.PNG',
+            self.builder.get_object(name + '_canvas', self.master),
+            temp_files,
+        )
+        setattr(self, name + '_tk', preview)
         self.update_preview()
 
     def on_force_ntsc(self):
@@ -1068,6 +988,9 @@ if __name__ == "__main__":
         )
     app = Ps3App(root)
     root.title('PSXFoundry PS3')
+    root.minsize(1040, 680)
+    root.rowconfigure(0, weight=1)
+    root.columnconfigure(0, weight=1)
     if smoke_test:
         root.update_idletasks()
         root.destroy()

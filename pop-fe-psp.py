@@ -5,22 +5,20 @@ from dataclasses import dataclass
 import hashlib
 import os
 import pygubu
-import re
 import shutil
-import struct
-import subprocess
 import tkinter as tk
-import tkinter.ttk as ttk
-import zipfile
 from pathlib import Path
 from tkinter import filedialog, messagebox
 from psxfoundry.gui import (
     CompletionDialog,
     ConversionTask,
     build_plan_with_missing_fix_prompt,
+    choose_image,
     clear_temporary_paths,
     find_preview_audio_url,
     install_tk_error_handler,
+    label_path_chooser,
+    render_image_preview,
     show_conversion_error,
 )
 from popfe_psp_import import FolderImportError, scan_psp_folder
@@ -52,15 +50,13 @@ except:
     True
 
 from PIL import Image
-from bchunk import bchunk
-import importlib  
+import importlib
 from gamedb import games, libcrypt, themes
 from layout import image_has_transparency
 try:
     import popfe
 except:
     popfe = importlib.import_module("pop-fe")
-from cue import parse_ccd, ccd2cue, write_cue
 
 verbose = False
 temp_files = []
@@ -193,42 +189,7 @@ class PspApp:
         builder.add_from_file(PROJECT_UI)
         self.mainwindow = builder.get_object("top_frame", master)
 
-        callbacks = {
-            'on_icon0_clicked': self.on_icon0_clicked,
-            'on_add_disc': self.on_add_disc,
-            'on_import_folder': self.on_import_folder,
-            'on_pic0_clicked': self.on_pic0_clicked,
-            'on_pic0_disabled': self.on_pic0_disabled,
-            'on_pic1_disabled': self.on_pic1_disabled,
-            'on_snd0_disabled': self.on_snd0_disabled,
-            'on_pic1_clicked': self.on_pic1_clicked,
-            'on_path_changed': self.on_path_changed,
-            'on_dir_changed': self.on_dir_changed,
-            'on_watermark': self.on_watermark,
-            'on_nopstitleimg': self.on_nopstitleimg,
-            'on_pic1aslogo': self.on_pic1aslogo,
-            'on_youtube_audio': self.on_youtube_audio,
-            'on_create_eboot': self.on_create_eboot,
-            'on_reset': self.on_reset,
-            'on_cdda': self.on_cdda,
-            'on_theme_selected': self.on_theme_selected,
-            'on_force_ntsc': self.on_force_ntsc,
-            'on_pic0_scaling': self.on_pic0_scaling,
-            'on_pic0_xoffset': self.on_pic0_xoffset,
-            'on_pic0_yoffset': self.on_pic0_yoffset,
-            'on_psx_undither': self.on_psx_undither,
-            'on_ntsc_u_icon0': self.on_ntsc_u_icon0,
-            'on_target_selected': self.on_target_selected,
-            'on_toggle_advanced': self.on_toggle_advanced,
-            'on_restore_automatic': self.on_restore_automatic,
-            'on_sbi1_clicked': self.on_sbi1_clicked,
-            'on_sbi2_clicked': self.on_sbi2_clicked,
-            'on_sbi3_clicked': self.on_sbi3_clicked,
-            'on_sbi4_clicked': self.on_sbi4_clicked,
-            'on_sbi5_clicked': self.on_sbi5_clicked,
-        }
-
-        builder.connect_callbacks(callbacks)
+        builder.connect_callbacks(self)
         self._configure_layout()
         self.builder.get_variable('import_all_discs_variable').set('on')
         self.builder.get_object('target', self.master).configure(
@@ -258,29 +219,32 @@ class PspApp:
         temp_files = []
 
     def _configure_layout(self):
-        main = self.mainwindow
-        main.columnconfigure(0, weight=1, uniform='content')
-        main.columnconfigure(1, weight=1, uniform='content')
+        self.mainwindow.columnconfigure(0, weight=1, uniform='content')
+        self.mainwindow.columnconfigure(1, weight=1, uniform='content')
+        self._configure_source_layout()
+        self._configure_preview_layout()
+        self._configure_output_layout()
+        self._configure_advanced_layout()
 
-        source_column = self.builder.get_object('frame9', self.master)
-        source_column.grid_configure(sticky='new')
+    def _configure_source_layout(self):
+        source = self.builder.get_object('frame9', self.master)
+        source.grid_configure(sticky='new')
 
         discs = self.builder.get_object('discs', self.master)
         discs.pack_configure(fill='x', expand=False)
         discs.columnconfigure(0, weight=1)
         for index in range(1, 6):
+            chooser = self.builder.get_object(f'disc{index}', self.master)
+            chooser.grid_configure(sticky='ew', pady=2)
+            label_path_chooser(chooser, 'Choose disc...')
             self.builder.get_object(
-                'disc%d' % index, self.master
-            ).grid_configure(sticky='ew', pady=2)
-            self.builder.get_object(
-                'discid%d' % index, self.master
+                f'discid{index}', self.master
             ).grid_configure(padx=(6, 0), pady=2)
 
         self.builder.get_object('separator5', self.master).pack_forget()
         details = self.builder.get_object('frame1', self.master)
         details.pack_configure(fill='x', expand=False, pady=(8, 0))
         details.columnconfigure(0, weight=1)
-
         detail_rows = (
             ('title_frame', 'label9', 'title'),
             ('manual_frame', 'label2', 'manual'),
@@ -300,9 +264,19 @@ class PspApp:
             )
 
         self.builder.get_object('youtube_button', self.master).grid_configure(
-            row=1, column=1, columnspan=1, pady=(4, 0), sticky='e'
+            row=1, column=1, pady=(4, 0), sticky='e'
         )
+        for object_id, text in (
+            ('manual', 'Choose manual...'),
+            ('logo', 'Choose logo...'),
+            ('snd0', 'Choose audio...'),
+            ('dir_input', 'Choose folder...'),
+        ):
+            label_path_chooser(
+                self.builder.get_object(object_id, self.master), text
+            )
 
+    def _configure_preview_layout(self):
         preview_column = self.builder.get_object('frame7', self.master)
         preview_column.grid_configure(sticky='new')
         preview_column.columnconfigure(0, weight=1)
@@ -319,12 +293,12 @@ class PspApp:
         self.builder.get_object('frame12', self.master).grid_configure(
             row=2, column=1, sticky='w'
         )
-
         images = self.builder.get_object('images', self.master)
         images.grid_configure(sticky='ew', pady=(10, 0))
         for column in range(3):
             images.columnconfigure(column, weight=1, uniform='artwork')
 
+    def _configure_output_layout(self):
         output = self.builder.get_object('output_frame', self.master)
         output.columnconfigure(1, weight=1)
         self.builder.get_object('label15', self.master).configure(
@@ -332,10 +306,11 @@ class PspApp:
         )
         self.builder.get_object('create_button', self.master).configure(width=22)
 
+    def _configure_advanced_layout(self):
         advanced = self.builder.get_object('frame4', self.master)
         advanced.configure(padding=10)
-        advanced.columnconfigure(0, weight=1, uniform='advanced')
-        advanced.columnconfigure(1, weight=1, uniform='advanced')
+        for column in range(2):
+            advanced.columnconfigure(column, weight=1, uniform='advanced')
         for object_id in ('artwork_settings', 'compatibility_settings'):
             panel = self.builder.get_object(object_id, self.master)
             panel.configure(padding=8)
@@ -1189,15 +1164,10 @@ class PspApp:
         self._mark_advanced_override('watermark')
         
     def on_icon0_clicked(self, event):
-        filetypes = [
-            ('Image files', ['.png', '.PNG', '.jpg', '.JPG']),
-            ('All Files', ['*.*', '*'])]
-        path = tk.filedialog.askopenfilename(title='Select image for ICON0',filetypes=filetypes)
-        try:
-            os.stat(path)
-            self.icon0 = Image.open(path)
-        except:
+        path, image = choose_image(self.master, 'Select image for ICON0')
+        if image is None:
             return
+        self.icon0 = image
         self.icon0_path = path
         self.update_assets(update_pic0=False, update_pic1=False)
         self.update_preview()
@@ -1218,41 +1188,34 @@ class PspApp:
         self._mark_advanced_override('disable_snd0')
 
     def on_pic0_clicked(self, event):
-        filetypes = [
-            ('Image files', ['.png', '.PNG', '.jpg', '.JPG']),
-            ('All Files', ['*.*', '*'])]
-        path = tk.filedialog.askopenfilename(title='Select image for PIC0',filetypes=filetypes)
-        try:
-            os.stat(path)
-            self.pic0 = Image.open(path)
-            self.pic0_orig = Image.open(path)
-            self.pic0_path = path
-        except:
+        path, image = choose_image(self.master, 'Select image for PIC0')
+        if image is None:
             return
-
-        temp_files.append(self.subdir + 'PIC0.PNG')
-        self.pic0.resize((128,80), Image.Resampling.HAMMING).save(self.subdir + 'PIC0.PNG')
-        self.pic0_tk = tk.PhotoImage(file = self.subdir + 'PIC0.PNG')
-        c = self.builder.get_object('pic0_canvas', self.master)
-        c.create_image(0, 0, image=self.pic0_tk, anchor='nw')
+        self.pic0 = image
+        self.pic0_orig = image.copy()
+        self.pic0_path = path
+        self.pic0_tk = render_image_preview(
+            image,
+            (128, 80),
+            self.subdir + 'PIC0.PNG',
+            self.builder.get_object('pic0_canvas', self.master),
+            temp_files,
+        )
         self.update_preview()
         
     def on_pic1_clicked(self, event):
-        filetypes = [
-            ('Image files', ['.png', '.PNG', '.jpg', '.JPG']),
-            ('All Files', ['*.*', '*'])]
-        path = tk.filedialog.askopenfilename(title='Select image for PIC1',filetypes=filetypes)
-        try:
-            os.stat(path)
-            self.pic1 = Image.open(path)
-            self.pic1_path = path
-        except:
+        path, image = choose_image(self.master, 'Select image for PIC1')
+        if image is None:
             return
-        temp_files.append(self.subdir + 'PIC1.PNG')
-        self.pic1.resize((128,80), Image.Resampling.HAMMING).save(self.subdir + 'PIC1.PNG')
-        self.pic1_tk = tk.PhotoImage(file = self.subdir + 'PIC1.PNG')
-        c = self.builder.get_object('pic1_canvas', self.master)
-        c.create_image(0, 0, image=self.pic1_tk, anchor='nw')
+        self.pic1 = image
+        self.pic1_path = path
+        self.pic1_tk = render_image_preview(
+            image,
+            (128, 80),
+            self.subdir + 'PIC1.PNG',
+            self.builder.get_object('pic1_canvas', self.master),
+            temp_files,
+        )
         self.update_preview()
 
     def on_pic0_scaling(self, event):

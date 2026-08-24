@@ -4,8 +4,15 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 from unittest.mock import patch
 
+from PIL import Image
+
 from popfe_runtime import RuntimePaths
-from psxfoundry.gui import confirm_conversion_without_fix, write_exception_log
+from psxfoundry.gui import (
+    confirm_conversion_without_fix,
+    label_path_chooser,
+    load_dropped_image,
+    write_exception_log,
+)
 from psxfoundry.registry import CompatibilityAssetError
 
 
@@ -13,6 +20,28 @@ REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 
 
 class GuiPathTests(unittest.TestCase):
+    def test_path_chooser_uses_a_text_label(self):
+        class Button:
+            def configure(self, **options):
+                self.options = options
+
+        chooser = type("Chooser", (), {"folder_button": Button()})()
+        label_path_chooser(chooser, "Choose folder...")
+
+        self.assertEqual(chooser.folder_button.options["text"], "Choose folder...")
+        self.assertGreaterEqual(chooser.folder_button.options["width"], 8)
+
+    def test_dropped_image_accepts_a_local_file(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "cover.png"
+            Image.new("RGB", (4, 3), "red").save(path)
+
+            image = load_dropped_image(
+                str(path), lambda *_args, **_kwargs: self.fail("network used")
+            )
+            self.assertEqual(image.size, (4, 3))
+            image.close()
+
     def test_gui_sources_do_not_write_relative_preferences_or_theme_files(self):
         for filename in ("pop-fe-psp.py", "pop-fe-ps3.py"):
             source = (REPOSITORY_ROOT / filename).read_text(encoding="utf-8")
@@ -202,6 +231,26 @@ class GuiPathTests(unittest.TestCase):
             with self.subTest(marker=marker):
                 self.assertIn(marker, source)
         self.assertNotIn("popfe.apply_ppf_fixes", source)
+
+    def test_ps3_gui_matches_the_desktop_workflow_layout(self):
+        ui = ET.parse(REPOSITORY_ROOT / "pop-fe-ps3.ui")
+        objects = {
+            element.attrib.get("id"): element
+            for element in ui.iter("object")
+        }
+        source = (REPOSITORY_ROOT / "pop-fe-ps3.py").read_text(
+            encoding="utf-8"
+        )
+
+        for object_id in ("discs", "nameofgame", "frame3", "outputpkg", "options"):
+            with self.subTest(object_id=object_id):
+                self.assertEqual(
+                    objects[object_id].attrib["class"], "ttk.Labelframe"
+                )
+        self.assertIn("def on_toggle_advanced(self):", source)
+        self.assertIn("get_object('options', self.master).grid_remove()", source)
+        self.assertIn("root.minsize(1040, 680)", source)
+        self.assertIn("Find preview audio online", ET.tostring(ui.getroot(), encoding="unicode"))
 
     def test_cli_requires_an_explicit_missing_fix_override(self):
         source = (REPOSITORY_ROOT / "pop-fe.py").read_text(encoding="utf-8")
