@@ -1,3 +1,4 @@
+import importlib
 import sys
 import unittest
 from pathlib import Path
@@ -6,6 +7,7 @@ from popfe_runtime import RuntimePaths
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
+popfe = importlib.import_module("pop-fe")
 
 
 class BackendToolIntegrationTests(unittest.TestCase):
@@ -138,6 +140,32 @@ class BackendToolIntegrationTests(unittest.TestCase):
 
         self.assertIn("REM PSXFOUNDRY COOKED_ISO", source)
         self.assertIn("convert_iso_to_bin(cue_file, tmpbin)", source)
+
+    def test_psp_config_flags_apply_to_planned_defaults(self):
+        config = popfe._load_psp_configs(
+            ["SCUS00001"],
+            ["SCUS00001"],
+            ["game.cue"],
+            [None],
+            force_ntsc=True,
+            cdda=True,
+        )[0]
+
+        self.assertEqual(config[0x09] & 0x20, 0x20)
+        self.assertEqual(config[0x0B] & 0x10, 0x10)
+        self.assertEqual(config[0x8D] & 0x20, 0x20)
+        self.assertEqual(config[0x8F] & 0x10, 0x10)
+
+    def test_ps3_ntsc_flag_merges_every_matching_command(self):
+        config = bytes([
+            0x20, 0, 0, 0, 0, 0, 0, 0,
+            0x20, 0, 0, 0, 1, 0, 0, 0,
+        ])
+
+        merged = popfe._force_ntsc_ps3_config(config)
+
+        self.assertEqual(merged[4], 0x40)
+        self.assertEqual(merged[12], 0x41)
 
 
 if __name__ == "__main__":

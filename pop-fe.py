@@ -2915,9 +2915,7 @@ def generate_pbp(dest_file, disc_ids, game_title, icon0, pic0, pic1, cue_files, 
     except:
         True
 
-    
-def create_psp(dest, disc_ids, real_disc_ids, game_title, icon0, pic0, pic1, cue_files, real_cue_files, img_files, mem_cards, aea_files, subdir = './', snd0=None, no_pstitleimg=False, watermark=False, subchannels=[], manual=None, use_cdda=False, logo=None, no_libcrypt=None, psx_undither=None, force_ntsc=False, cdda=False, planned_configs=None, compression_level=1):
-    EMPTY_CONFIG = bytes([
+PSP_EMPTY_CONFIG = bytes([
         0x70,0x00,0x07,0x06,0x00,0x00,0x06,0x06,0x00,0x00,0x00,0x00,0xFF,0xFF,0xFF,0xFF,
         0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,
         0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,
@@ -2935,8 +2933,172 @@ def create_psp(dest, disc_ids, real_disc_ids, game_title, icon0, pic0, pic1, cue
         0xFF,0xFF,0x00,0x00,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0x00,0x00,0x00,0x00,
         0x00,0x00,0x00,0x00,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,
         0xFF,0xFF,0xFF,0xFF,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0xFF,0xFF,0xFF,0xFF
-    ])
-    
+])
+
+
+def _load_psp_configs(
+    disc_ids,
+    real_disc_ids,
+    real_cue_files,
+    planned_configs,
+    force_ntsc,
+    cdda,
+):
+    if planned_configs is not None:
+        if len(planned_configs) != len(disc_ids):
+            raise ValueError('planned_configs must have one entry per disc')
+        configs = [
+            PSP_EMPTY_CONFIG[:] if config is None else bytes(config)
+            for config in planned_configs
+        ]
+    else:
+        configs = []
+        for index, disc_id in enumerate(real_disc_ids):
+            config = PSP_EMPTY_CONFIG[:]
+            config_path = real_cue_files[index][:-3] + 'pspconfig'
+            try:
+                with open(config_path, 'rb') as config_file:
+                    print('Found an external config', config_path)
+                    config = config_file.read()
+            except OSError:
+                pass
+            if disc_id in games and 'pspconfig' in games[disc_id]:
+                print('Found an external config for', disc_id)
+                config_path = popfe_runtime.resource_path(
+                    games[disc_id]['pspconfig'], required=True
+                )
+                with open(config_path, 'rb') as config_file:
+                    config = config_file.read()
+            configs.append(config)
+
+    for index, config in enumerate(configs):
+        if force_ntsc == 1:
+            print('Force NTSC in config')
+            config = bytearray(config)
+            if len(config) > 0x0b:
+                config[0x0b] |= 0x10
+            if len(config) > 0x8f:
+                config[0x8f] |= 0x10
+        if cdda:
+            config = bytearray(config)
+            if len(config) > 0x09:
+                config[0x09] |= 0x20
+            if len(config) > 0x8d:
+                config[0x8d] |= 0x20
+        configs[index] = config
+    return configs
+
+
+def _png_bytes(image):
+    output = io.BytesIO()
+    image.save(output, format='PNG')
+    return output.getvalue()
+
+
+def _prepare_psp_artwork(
+    game_title, disc_id, logo, icon0, pic0, pic1, watermark
+):
+    if logo:
+        if logo.size != (480, 272):
+            logo = logo.resize((480, 272), Image.Resampling.LANCZOS)
+        logo = _png_bytes(logo)
+
+    if icon0:
+        aspect_ratio = icon0.size[0] / icon0.size[1]
+        target_size = (80, 80) if 0.75 < aspect_ratio < 1.4 else (144, 80)
+        if icon0.size != target_size:
+            icon0 = icon0.resize(target_size, Image.Resampling.LANCZOS)
+        icon0 = _png_bytes(icon0)
+
+    if pic0:
+        pic0 = pic0.resize(
+            (310, 180), Image.Resampling.LANCZOS
+        ).convert('RGBA')
+        pic0 = _png_bytes(pic0)
+
+    if pic1:
+        pic1 = pic1.resize(
+            (480, 272), Image.Resampling.LANCZOS
+        ).convert('RGBA')
+        if watermark:
+            try:
+                pic1 = add_image_text(pic1, game_title, disc_id)
+            except Exception:
+                pass
+        pic1 = _png_bytes(pic1)
+    return logo, icon0, pic0, pic1
+
+
+def _prepare_psp_sound(sound_path, work_dir):
+    if not sound_path:
+        return None
+    with open(sound_path, 'rb') as sound_file:
+        if sound_file.read(4) == b'RIFF':
+            riff = parse_riff(sound_path)
+            if riff['fmt ']['compression_code'] in (624, 65534):
+                print('SND0 is already in AT3 format. No conversion needed.')
+                sound_file.seek(0)
+                return sound_file.read()
+
+    wave_path = work_dir + 'snd0_tmp.wav'
+    temp_files.append(wave_path)
+    try:
+        subprocess.run(
+            popfe_runtime.tool_command(
+                'ffmpeg', '-y', '-i', sound_path,
+                '-ar', '44100', '-ac', '2', wave_path,
+            ),
+            check=True,
+            stderr=subprocess.DEVNULL,
+        )
+    except (OSError, subprocess.CalledProcessError):
+        return None
+
+    at3_path = work_dir + '/SND0.AT3'
+    if not convert_snd0_to_at3(
+        wave_path, at3_path, 59, 500000, subdir=work_dir
+    ):
+        return None
+    with open(at3_path, 'rb') as sound_file:
+        return sound_file.read()
+
+
+def _psp_game_dir(destination, disc_id):
+    psp_game_dir = destination + '/PSP/GAME/'
+    if os.path.isdir(psp_game_dir):
+        game_dir = psp_game_dir + disc_id
+    else:
+        game_dir = destination + '/' + disc_id
+    print('Install EBOOT in', game_dir) if verbose else None
+    os.makedirs(game_dir, exist_ok=True)
+    return game_dir
+
+
+def _write_psp_memory_cards(destination, game_dir, disc_id, mem_cards):
+    for index, memory_card in enumerate(mem_cards):
+        card_path = game_dir + f'/SCEVMC{index}.VMP'
+        print('Installing MemoryCard in temporary location as', card_path)
+        with open(card_path, 'wb') as output:
+            output.write(encode_vmp(memory_card))
+    if not mem_cards:
+        return
+
+    print('Memory card images were written to the game directory.')
+    print('1. Disconnect the PSP or Vita.')
+    print('2. Start and close the game to create its SAVEDATA directory.')
+    print('3. Reconnect the device and run:')
+    print(
+        'psxfoundry --psp-dir=%s --game_id=%s --psp-install-memory-card'
+        % (destination, disc_id)
+    )
+    try:
+        os.sync()
+    except AttributeError:
+        pass
+
+
+def create_psp(dest, disc_ids, real_disc_ids, game_title, icon0, pic0, pic1, cue_files, real_cue_files, img_files, mem_cards, aea_files, subdir = './', snd0=None, no_pstitleimg=False, watermark=False, subchannels=[], manual=None, use_cdda=False, logo=None, no_libcrypt=None, psx_undither=None, force_ntsc=False, cdda=False, planned_configs=None, compression_level=1):
+
     if not no_libcrypt:
         try:
             # The libcrypt patcher crashes on some games like 'This Is Football (Europe) (Fr,Nl)'
@@ -2948,150 +3110,19 @@ def create_psp(dest, disc_ids, real_disc_ids, game_title, icon0, pic0, pic1, cue
     if psx_undither:
         cue_files, img_files = patch_undither(disc_ids, cue_files, img_files, subdir=subdir)
 
-    if planned_configs is not None:
-        if len(planned_configs) != len(disc_ids):
-            raise ValueError('planned_configs must have one entry per disc')
-        configs = [
-            EMPTY_CONFIG[:] if config is None else bytes(config)
-            for config in planned_configs
-        ]
-    else:
-        configs = []
-        for i in range(len(disc_ids)):
-            configs.append(EMPTY_CONFIG[:])
-            try:
-                os.stat(real_cue_files[i][:-3]+'pspconfig').st_size
-                print('Found an external config ', real_cue_files[i][:-3]+'pspconfig')
-                with open(real_cue_files[i][:-3]+'pspconfig', 'rb') as f:
-                    configs[i] = f.read()
-            except:
-                True
-            disc_id = real_disc_ids[i]
-            if disc_id in games and 'pspconfig' in games[disc_id]:
-                print('Found an external config for', disc_id)
-                config_path = popfe_runtime.resource_path(
-                    games[disc_id]['pspconfig'],
-                    required=True,
-                )
-                with open(config_path, 'rb') as f:
-                    configs[i] = f.read()
-
-    for i in range(len(disc_ids)):
-        if force_ntsc == 1:
-            print('Force NTSC in config')
-            configs[i] = bytearray(configs[i])
-            # Set NTSC bit in configs
-            if len(configs[i]) > 0x0b:
-                configs[i][0x0b] |= 0x10
-            if len(configs[i]) > 0x8f:
-                configs[i][0x8f] |= 0x10
-        if cdda:
-            configs[i] = bytearray(configs[i])
-            # Set CDDA bit in configs
-            if len(configs[i]) > 0x09:
-                configs[i][0x09] |= 0x20 # same effect as cdda_enabler
-            if len(configs[i]) > 0x8d:
-                configs[i][0x8d] |= 0x20 # same effect as cdda_enabler
-
-
-    # Convert LOGO to a file object
-    if logo:
-        image = logo
-        if image.size != (480,272):
-            image = image.resize((480, 272), Image.Resampling.LANCZOS)
-        i = io.BytesIO()
-        image.save(i, format='PNG')
-        i.seek(0)
-        logo = i.read()
-
-    # Convert ICON0 to a file object
-    if icon0:
-        image = icon0
-        if icon0.size[0] / icon0.size[1] < 1.4 and icon0.size[0] / icon0.size[1] > 0.75:
-            if icon0.size != (80,80):
-                image = icon0.resize((80, 80), Image.Resampling.LANCZOS)
-        else:
-            if icon0.size != (144,80):
-                image = icon0.resize((144, 80), Image.Resampling.LANCZOS)
-        i = io.BytesIO()
-        image.save(i, format='PNG')
-        i.seek(0)
-        icon0 = i.read()
-
-    # Convert PIC0 to a file object
-    if pic0:
-        pic0 = pic0.resize((310, 180), Image.Resampling.LANCZOS).convert("RGBA")
-        i = io.BytesIO()
-        pic0.save(i, format='PNG')
-        i.seek(0)
-        pic0 = i.read()
-
-    # Convert PIC1 to a file object
-    if pic1:
-        pic1 = pic1.resize((480, 272), Image.Resampling.LANCZOS).convert("RGBA")
-        if watermark:
-            try:
-                pic1 = add_image_text(pic1, game_title, disc_ids[0])
-            except:
-                True
-        i = io.BytesIO()
-        pic1.save(i, format='PNG')
-        i.seek(0)
-        pic1 = i.read()
-
-    # Try /PSP/GAME/ if it exists as this is where a PSP memorystick will
-    # store the games. 
-    try:
-        os.stat(dest + '/PSP/GAME/')
-        f = dest + '/PSP/GAME/' + disc_ids[0]
-    except:
-        f = dest + '/' + disc_ids[0]
-
-    print('Install EBOOT in', f) if verbose else None
-    try:
-        os.mkdir(f)
-    except:
-        True
-
-    snd0_data = None
-    if snd0:
-        # Check if it is already in ATRAC3 format
-        with open(snd0, 'rb') as s:
-            buf = s.read(36)
-            if buf[:4] == b'RIFF':
-                riff = parse_riff(snd0)
-                if riff['fmt ']['compression_code'] in [624, 65534]:
-                    print('SND0 is already in AT3 format. No conversion needed.')
-                    s.seek(0)
-                    snd0_data = s.read()
-                    snd0 = None
-    if snd0:
-        # PSP converts directly to 44100 as opposed to PS3 due to
-        # XMB differences
-        try:
-            temp_files.append(subdir + 'snd0_tmp.wav')
-            subprocess.run(
-                popfe_runtime.tool_command(
-                    'ffmpeg',
-                    '-y',
-                    '-i',
-                    snd0,
-                    '-ar',
-                    '44100',
-                    '-ac',
-                    '2',
-                    subdir + 'snd0_tmp.wav',
-                ),
-                check=True,
-                stderr=subprocess.DEVNULL,
-            )
-            snd0 = subdir + 'snd0_tmp.wav'
-        except:
-            snd0 = None
-    if snd0:
-        if convert_snd0_to_at3(snd0, subdir + '/SND0.AT3', 59, 500000, subdir=subdir):
-            with open(subdir + 'SND0.AT3', 'rb') as i:
-                snd0_data = i.read()
+    configs = _load_psp_configs(
+        disc_ids,
+        real_disc_ids,
+        real_cue_files,
+        planned_configs,
+        force_ntsc,
+        cdda,
+    )
+    logo, icon0, pic0, pic1 = _prepare_psp_artwork(
+        game_title, disc_ids[0], logo, icon0, pic0, pic1, watermark
+    )
+    f = _psp_game_dir(dest, disc_ids[0])
+    snd0_data = _prepare_psp_sound(snd0, subdir)
 
     dest_file = f + '/EBOOT.PBP'
     whole_disk = whole_disc_modes(len(img_files), aea_files, use_cdda=use_cdda)
@@ -3106,30 +3137,7 @@ def create_psp(dest, disc_ids, real_disc_ids, game_title, icon0, pic0, pic1, cue
         print('Installing manual as', f + '/DOCUMENT.DAT')
         copy_file(manual, f + '/DOCUMENT.DAT')
 
-    idx = 0
-    for mc in mem_cards:
-        mf = f + ('/SCEVMC%d.VMP' % idx)
-        with open(mf, 'wb') as of:
-            print('Installing MemoryCard in temporary location as', mf)
-            of.write(encode_vmp(mc))
-        idx = idx + 1 
-    if idx > 0:
-        print('###################################################')
-        print('###################################################')
-        print('Memory card images temporarily written to the game directory.')
-        print('1, Remove the PSP/VITA')
-        print('2, Start the game to create the SAVEDATA directory')
-        print('   and then quit the game.')
-        print('3, Reconnect the PSP/VITA')
-        print('4, Run this command to finish installing the memory cards:')
-        print('')
-        print('psxfoundry --psp-dir=%s --game_id=%s --psp-install-memory-card' % (dest, disc_ids[0]))
-        print('###################################################')
-        print('###################################################')
-        try:
-            os.sync()
-        except:
-            True
+    _write_psp_memory_cards(dest, f, disc_ids[0], mem_cards)
 
     return dest_file
 
@@ -3166,27 +3174,377 @@ def create_psc(dest, disc_ids, game_title, icon0, pic1, cue_files, img_files, wa
     except:
         True
 
-            
-def create_ps3(dest, disc_ids, real_disc_ids, game_title, icon0, pic0, pic1, cue_files, real_cue_files, img_files, mem_cards, aea_files, magic_word, resolution, subdir = './', snd0=None, whole_disk=True, subchannels=[], manual=None, no_libcrypt=None, psx_undither=False, ps1_newemu=False, enable_swap=False, force_ntsc=False, planned_configs=None):
-    #
-    # This one is special since the same command may be used for other things
-    # so we need to merge the argument if teh command is already there
-    #
-    def force_ntsc_config(config):
-        c = bytearray(config)
-        merged = False
-        for i in range(0, len(c), 8):
-            if c[i] == 0x20:
-                c[i + 4] = c[i + 4] | 0x40
-                merged = True
-        if not merged:
-            c = c + bytes([0x20, 0x00, 0x00, 0x00, 0x40,  0x00, 0x00, 0x00])
-        return c
 
-    print('Create PS3 PKG for', game_title) if verbose else None
+def _force_ntsc_ps3_config(config):
+    config = bytearray(config)
+    found = False
+    for offset in range(0, len(config), 8):
+        if config[offset] == 0x20:
+            config[offset + 4] |= 0x40
+            found = True
+    if found:
+        return config
+    return config + bytes([
+        0x20, 0x00, 0x00, 0x00, 0x40, 0x00, 0x00, 0x00,
+    ])
 
+
+def _load_ps3_configs(
+    disc_ids,
+    real_disc_ids,
+    real_cue_files,
+    planned_configs,
+    ps1_newemu,
+    enable_swap,
+    force_ntsc,
+):
     if planned_configs is not None and len(planned_configs) != len(disc_ids):
         raise ValueError('planned PS3 configs must match the disc count')
+
+    configs = []
+    for index, disc_id in enumerate(disc_ids):
+        config = bytes()
+        if ps1_newemu:
+            print('Forcing ps1_newemu on all disks for this game')
+            configs.append(bytes([
+                0x38, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00,
+            ]))
+            continue
+        if enable_swap:
+            print('Enable swapdisc for all discs')
+            if len(config) / 8 >= 8:
+                raise ValueError(
+                    'Cannot apply swapdisc to a disc with 8 config commands'
+                )
+            config += bytes([
+                0x12, 0x00, 0x00, 0x00, 0x20, 0x00, 0x00, 0x00,
+            ])
+        if force_ntsc:
+            print('Force NTSC in config. Game may run at wrong speed on PAL consoles')
+            config = _force_ntsc_ps3_config(config)
+
+        config_path = real_cue_files[index][:-3] + 'ps3config'
+        try:
+            with open(config_path, 'rb') as config_file:
+                print('Found an external config', config_path)
+                config_file.seek(8)
+                config += config_file.read()
+        except OSError:
+            pass
+
+        if planned_configs is not None:
+            if planned_configs[index] is not None:
+                config += planned_configs[index]
+        else:
+            real_disc_id = real_disc_ids[index]
+            if real_disc_id in games and 'ps3config' in games[real_disc_id]:
+                print('Found an external config for', real_disc_id)
+                config_path = popfe_runtime.resource_path(
+                    games[real_disc_id]['ps3config'],
+                    required=True,
+                )
+                with open(config_path, 'rb') as config_file:
+                    config_file.seek(8)
+                    config += config_file.read()
+        configs.append(config)
+    return configs
+
+
+def _configure_ps3_popstation(
+    disc_ids,
+    game_title,
+    cue_files,
+    img_files,
+    aea_files,
+    subchannels,
+    configs,
+    magic_word,
+    whole_disk,
+):
+    converter = popstation()
+    converter.verbose = verbose
+    converter.disc_ids = disc_ids
+    converter.game_title = game_title
+    converter.subchannels = subchannels
+    converter.striptracks = not whole_disk
+    converter.complevel = 0
+    converter.magic_word = magic_word
+    if aea_files:
+        converter.aea = aea_files
+    if configs:
+        converter.configs = configs
+
+    for cue_file, image_file in zip(cue_files, img_files):
+        print('Need to create a TOC') if verbose else None
+        toc = get_toc_from_cue(cue_file)
+        print('Add image', image_file) if verbose else None
+        converter.add_img((image_file, toc))
+        if not whole_disk:
+            image = bchunk()
+            image.towav = True
+            image.open(cue_file)
+            converter.add_track0_size(
+                image.tracks[1]['INDEX'][1]['STOPSECT'] * 2352
+            )
+
+    if disc_ids[0].startswith('SLED'):
+        print('Apply hotfix for SLED games')
+        converter.hotfixes = [(b'SLED', b'SLES')]
+    if disc_ids[0].startswith('SCED'):
+        print('Apply hotfix for SCED games')
+        converter.hotfixes = [(b'SCED', b'SCES')]
+    return converter
+
+
+def _sfo_number(value):
+    return {'data_fmt': 1028, 'data': value}
+
+
+def _sfo_text(value, max_length):
+    return {'data_fmt': 516, 'data_max_len': max_length, 'data': value}
+
+
+def _sfo_bytes(value, max_length):
+    return {'data_fmt': 4, 'data_max_len': max_length, 'data': str(value)}
+
+
+def _write_sfo(path, fields):
+    with open(path, 'wb') as output:
+        output.write(GenerateSFO(fields))
+    temp_files.append(path)
+
+
+def _write_ps3_sound(sound_path, game_dir, work_dir):
+    if not sound_path:
+        return
+    with open(sound_path, 'rb') as sound_file:
+        if sound_file.read(4) == b'RIFF':
+            riff = parse_riff(sound_path)
+            if riff['fmt ']['compression_code'] in (624, 65534):
+                print('SND0 is already in AT3 format. No conversion needed.')
+                copy_file(sound_path, game_dir + '/SND0.AT3')
+                return
+
+    wave_path = work_dir + 'snd0_tmp.wav'
+    temp_files.append(wave_path)
+    try:
+        subprocess.run(
+            popfe_runtime.tool_command(
+                'ffmpeg', '-y', '-i', sound_path,
+                '-ar', '48000', '-ac', '2', wave_path,
+            ),
+            check=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    except (OSError, subprocess.CalledProcessError):
+        return
+
+    # ATRAC encoding expects 44.1 kHz while the PS3 XMB plays it at 48 kHz.
+    with open(wave_path, 'rb+') as wave_file:
+        sample_rate = bytearray(4)
+        struct.pack_into('<I', sample_rate, 0, 0xac44)
+        wave_file.seek(0x18)
+        wave_file.write(sample_rate)
+    convert_snd0_to_at3(
+        wave_path,
+        game_dir + '/SND0.AT3',
+        299,
+        2500000,
+        subdir=work_dir,
+    )
+
+
+def _write_ps3_artwork(game_dir, icon0, pic0, pic1):
+    savedata_icon = icon0
+    if icon0:
+        aspect_ratio = icon0.size[0] / icon0.size[1]
+        image = icon0
+        if 0.75 < aspect_ratio < 1.4:
+            if icon0.size != (176, 176):
+                savedata_icon = icon0.resize(
+                    (176, 176), Image.Resampling.LANCZOS
+                )
+            image = Image.new(
+                savedata_icon.mode, (320, 176), (0, 0, 0)
+            ).convert('RGBA')
+            image.putalpha(0)
+            image.paste(savedata_icon, (72, 0))
+        elif icon0.size != (320, 176):
+            image = icon0.resize((320, 176), Image.Resampling.LANCZOS)
+        image.save(game_dir + '/ICON0.PNG', format='PNG')
+        temp_files.append(game_dir + '/ICON0.PNG')
+
+    if pic0:
+        if pic0.size != (1000, 560):
+            pic0 = pic0.resize((1000, 560), Image.Resampling.LANCZOS)
+        pic0.save(game_dir + '/PIC0.PNG', format='PNG')
+        temp_files.append(game_dir + '/PIC0.PNG')
+        pic0.resize((310, 250), Image.Resampling.LANCZOS).save(
+            game_dir + '/PIC2.PNG', format='PNG'
+        )
+        temp_files.append(game_dir + '/PIC2.PNG')
+
+    if pic1:
+        pic1.resize((1920, 1080), Image.Resampling.LANCZOS).save(
+            game_dir + '/PIC1.PNG', format='PNG'
+        )
+        temp_files.append(game_dir + '/PIC1.PNG')
+    return savedata_icon
+
+
+def _prepare_ps3_package_tree(
+    disc_id,
+    game_title,
+    resolution,
+    icon0,
+    pic0,
+    pic1,
+    sound_path,
+    manual,
+    work_dir,
+):
+    game_dir = work_dir + disc_id
+    print('GameID', game_dir)
+    os.makedirs(game_dir, exist_ok=True)
+    _write_sfo(
+        game_dir + '/PARAM.SFO',
+        {
+            'ANALOG_MODE': _sfo_number(1),
+            'ATTRIBUTE': _sfo_number(2),
+            'BOOTABLE': _sfo_number(1),
+            'CATEGORY': _sfo_text('1P', 4),
+            'PARENTAL_LEVEL': _sfo_number(3),
+            'PS3_SYSTEM_VER': _sfo_text('01.7000', 8),
+            'RESOLUTION': _sfo_number(resolution),
+            'SOUND_FORMAT': _sfo_number(1),
+            'TITLE': _sfo_text(game_title, 128),
+            'TITLE_ID': _sfo_text(games[disc_id]['id'], 16),
+            'VERSION': _sfo_text('01.00', 8),
+        },
+    )
+    _write_ps3_sound(sound_path, game_dir, work_dir)
+    savedata_icon = _write_ps3_artwork(game_dir, icon0, pic0, pic1)
+    copy_file(
+        popfe_runtime.resource_path('PS3LOGO.DAT', required=True),
+        game_dir + '/PS3LOGO.DAT',
+    )
+    temp_files.append(game_dir + '/PS3LOGO.DAT')
+
+    user_dir = game_dir + '/USRDIR'
+    content_dir = user_dir + '/CONTENT'
+    os.makedirs(content_dir, exist_ok=True)
+    emulator_config = bytes([
+        0x1c, 0x00, 0x00, 0x00, 0x50, 0x53, 0x31, 0x45,
+        0x6d, 0x75, 0x43, 0x6f, 0x6e, 0x66, 0x69, 0x67,
+        0x46, 0x69, 0x6c, 0x65, 0x00, 0xe3, 0xb7, 0xeb,
+        0x04, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00,
+        0xbb, 0xfa, 0xe2, 0x1b, 0x10, 0x00, 0x00, 0x00,
+        0x64, 0x69, 0x73, 0x63, 0x5f, 0x6e, 0x6f, 0x00,
+        0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x93, 0xd1, 0x5b, 0xf8,
+    ])
+    with open(user_dir + '/CONFIG', 'wb') as output:
+        output.write(emulator_config)
+    temp_files.append(user_dir + '/CONFIG')
+
+    if manual:
+        manual_path = content_dir + '/DOCUMENT.DAT'
+        print('Installing manual as', manual_path)
+        copy_file(manual, manual_path)
+    return game_dir, content_dir, savedata_icon
+
+
+def _write_ps3_eboot(converter, game_dir, content_dir):
+    converter.eboot = content_dir + '/EBOOT.PBP'
+    converter.iso_bin_dat = game_dir + '/USRDIR/ISO.BIN.DAT'
+    try:
+        os.unlink(converter.iso_bin_dat)
+    except FileNotFoundError:
+        pass
+
+    print('Create EBOOT.PBP at', converter.eboot)
+    converter.create_pbp()
+    validation = validate_eboot(converter.eboot)
+    if not validation.ok:
+        os.unlink(converter.eboot)
+        raise ValueError('generated PS3 EBOOT failed structural validation')
+    temp_files.extend((converter.eboot, converter.iso_bin_dat))
+    try:
+        os.sync()
+    except AttributeError:
+        pass
+    print('Signing', converter.iso_bin_dat)
+    subprocess.run(
+        popfe_runtime.tool_command('sign3', converter.iso_bin_dat),
+        check=True,
+    )
+
+
+def _write_ps3_savedata(game_dir, disc_id, game_title, icon0, mem_cards):
+    savedata_dir = game_dir + '/USRDIR/SAVEDATA'
+    os.makedirs(savedata_dir, exist_ok=True)
+    if icon0:
+        icon0.resize((80, 80), Image.Resampling.LANCZOS).save(
+            savedata_dir + '/ICON0.PNG', format='PNG'
+        )
+        temp_files.append(savedata_dir + '/ICON0.PNG')
+
+    if len(mem_cards) < 1:
+        create_blank_mc(savedata_dir + '/SCEVMC0.VMP')
+    if len(mem_cards) < 2:
+        create_blank_mc(savedata_dir + '/SCEVMC1.VMP')
+    for index, memory_card in enumerate(mem_cards):
+        card_path = savedata_dir + f'/SCEVMC{index}.VMP'
+        print('Installing MemoryCard as', card_path)
+        with open(card_path, 'wb') as output:
+            output.write(encode_vmp(memory_card))
+    temp_files.extend((
+        savedata_dir + '/SCEVMC0.VMP',
+        savedata_dir + '/SCEVMC1.VMP',
+    ))
+
+    savedata_params = b"A\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xda\xdaC4\x1br\xc2\xede\xa1/k'D\xc6\x11(\xcf\xc8\xb7(\xb8tG+*f\x85L\nm\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x8a\xfa,\xa1\xe7+mA\xc5m.\x9a\xba\xbct\xb0"
+    _write_sfo(
+        savedata_dir + '/PARAM.SFO',
+        {
+            'CATEGORY': _sfo_text('MS', 4),
+            'PARENTAL_LEVEL': _sfo_number(1),
+            'SAVEDATA_DETAIL': _sfo_text('', 4),
+            'SAVEDATA_DIRECTORY': _sfo_text(games[disc_id]['id'], 4),
+            'SAVEDATA_FILE_LIST': _sfo_bytes(bytes(3168), 3168),
+            'SAVEDATA_TITLE': _sfo_text('', 128),
+            'TITLE': _sfo_text(game_title, 128),
+            'SAVEDATA_PARAMS': _sfo_bytes(savedata_params, 128),
+        },
+    )
+
+
+def _create_ps3_pkg(dest, game_dir, disc_id):
+    content_id = f'UP9000-{disc_id}_00-0000000000000001'
+    source = game_dir + '/USRDIR/ISO.BIN.DAT'
+    encrypted = game_dir + '/USRDIR/ISO.BIN.EDAT'
+    print('Create ISO.BIN.EDAT')
+    pack(source, encrypted, content_id)
+    temp_files.append(encrypted)
+
+    print('Create PKG')
+    subprocess.run(
+        popfe_runtime.tool_command(
+            'pkg', '-c', content_id, game_dir, dest,
+        ),
+        check=True,
+    )
+    temp_files.extend((
+        game_dir + '/USRDIR/CONTENT',
+        game_dir + '/USRDIR/SAVEDATA',
+        game_dir + '/USRDIR',
+        game_dir,
+    ))
+
+
+def create_ps3(dest, disc_ids, real_disc_ids, game_title, icon0, pic0, pic1, cue_files, real_cue_files, img_files, mem_cards, aea_files, magic_word, resolution, subdir = './', snd0=None, whole_disk=True, subchannels=[], manual=None, no_libcrypt=None, psx_undither=False, ps1_newemu=False, enable_swap=False, force_ntsc=False, planned_configs=None):
+    print('Create PS3 PKG for', game_title) if verbose else None
 
     if not no_libcrypt:
         try:
@@ -3199,356 +3557,43 @@ def create_ps3(dest, disc_ids, real_disc_ids, game_title, icon0, pic0, pic1, cue
     if psx_undither:
         cue_files, img_files = patch_undither(disc_ids, cue_files, img_files, subdir=subdir)
 
-    configs = []
-    for i in range(len(disc_ids)):
-        configs.append(bytes())
-        if ps1_newemu:
-            print('Forcing ps1_newemu on all disks for this game')
-            configs[i] = bytes([0x38, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00])
-            continue
-        if enable_swap:
-            print('Enable swapdisc for all discs')
-            if len(configs[i])/8 < 8:
-                configs[i] = configs[i] + bytes([0x12, 0x00, 0x00, 0x00, 0x20,  0x00, 0x00, 0x00])
-            else:
-                raise Exception('Cannot apply swapdisc to this disc. It already has 8 config commands')
-        if force_ntsc:
-            print('Force NTSC in config. Game may run at wrong speed on PAL consoles')
-            configs[i] = force_ntsc_config(configs[i])
-        try:
-            os.stat(real_cue_files[i][:-3]+'ps3config').st_size
-            print('Found an external config ', real_cue_files[i][:-3]+'ps3config')
-            with open(real_cue_files[i][:-3]+'ps3config', 'rb') as f:
-                f.seek(8)
-                configs[i] = configs[i] + f.read()
-        except:
-            True
-        if planned_configs is not None:
-            if planned_configs[i] is not None:
-                configs[i] = configs[i] + planned_configs[i]
-        else:
-            disc_id = real_disc_ids[i]
-            if disc_id in games and 'ps3config' in games[disc_id]:
-                print('Found an external config for', disc_id)
-                config_path = popfe_runtime.resource_path(
-                    games[disc_id]['ps3config'],
-                    required=True,
-                )
-                with open(config_path, 'rb') as f:
-                    f.seek(8)
-                    configs[i] = configs[i] + f.read()
-
-
-    SECTLEN = 2352
-    p = popstation()
-    p.verbose = verbose
-    p.disc_ids = disc_ids
-    p.game_title = game_title
-    p.subchannels = subchannels
-    #p.icon0 = icon0
-    #p.pic1 = pic1
-    if not whole_disk:
-        p.striptracks = True
-    p.complevel = 0
-    p.magic_word = magic_word
-    if len(aea_files):
-        p.aea = aea_files
-    if configs:
-        p.configs = configs
-    for i in range(len(img_files)):
-        f = img_files[i]
-        print('Need to create a TOC') if verbose else None
-        toc = get_toc_from_cue(cue_files[i])
-        p.add_img((f, toc))
-        
-        if not whole_disk:
-            bc = bchunk()
-            bc.towav = True
-            bc.open(cue_files[i])
-            # store how big the data track is
-            p.add_track0_size(bc.tracks[1]['INDEX'][1]['STOPSECT'] * SECTLEN)
-    if disc_ids[0][:4] == 'SLED':
-        print('Apply hotfix for SLED games')
-        p.hotfixes = [ (b'SLED', b'SLES'), ]
-    if disc_ids[0][:4] == 'SCED':
-        print('Apply hotfix for SCED games')
-        p.hotfixes = [ (b'SCED', b'SCES'), ]
-
-    # create directory structure
-    f = subdir + disc_ids[0]
-    print('GameID', f)
-    try:
-        os.mkdir(f)
-    except:
-        True
-
-    sfo = {
-        'ANALOG_MODE': {
-            'data_fmt': 1028,
-            'data': 1},
-        'ATTRIBUTE': {
-            'data_fmt': 1028,
-            'data': 2},
-        'BOOTABLE': {
-            'data_fmt': 1028,
-            'data': 1},
-        'CATEGORY': {
-            'data_fmt': 516,
-            'data_max_len': 4,
-            'data': '1P'},
-        'PARENTAL_LEVEL': {
-            'data_fmt': 1028,
-            'data': 3},
-        'PS3_SYSTEM_VER': {
-            'data_fmt': 516,
-            'data_max_len': 8,
-            'data': '01.7000'},
-        'RESOLUTION': {
-            'data_fmt': 1028,
-            'data': resolution},
-        'SOUND_FORMAT': {
-            'data_fmt': 1028,
-            'data': 1},
-        'TITLE': {
-            'data_fmt': 516,
-            'data_max_len': 128,
-            'data': game_title},
-        'TITLE_ID': {
-            'data_fmt': 516,
-            'data_max_len': 16,
-            'data': games[disc_ids[0]]['id']},
-        'VERSION': {
-            'data_fmt': 516,
-            'data_max_len': 8,
-            'data': '01.00'}
-        }
-    with open(f + '/PARAM.SFO', 'wb') as of:
-        of.write(GenerateSFO(sfo))
-        temp_files.append(f + '/PARAM.SFO')
-    if snd0:
-        # Check if it is already in ATRAC3 format
-        with open(snd0, 'rb') as s:
-            buf = s.read(36)
-            if buf[:4] == b'RIFF':
-                riff = parse_riff(snd0)
-                if riff['fmt ']['compression_code'] in [624, 65534]:
-                    print('SND0 is already in AT3 format. No conversion needed.')
-                    copy_file(snd0, f + '/SND0.AT3')
-                    snd0 = None
-    if snd0:
-        try:
-            temp_files.append(subdir + 'snd0_tmp.wav')
-            subprocess.run(
-                popfe_runtime.tool_command(
-                    'ffmpeg',
-                    '-y',
-                    '-i',
-                    snd0,
-                    '-ar',
-                    '48000',
-                    '-ac',
-                    '2',
-                    subdir + 'snd0_tmp.wav',
-                ),
-                check=True,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-            )
-            snd0 = subdir + 'snd0_tmp.wav'
-        except:
-            snd0 = None
-        # Patch it back to 44100 to make atracdenc happy, the XMB will play it at 48000 anyway
-        with open(snd0, 'rb+') as ff:
-            _b = bytearray(4)
-            struct.pack_into('<I', _b, 0, 0xac44)
-            ff.seek(0x18)
-            ff.write(_b)
-        convert_snd0_to_at3(snd0, f + '/SND0.AT3', 299, 2500000, subdir=subdir)
-
-    if icon0:
-        image = icon0
-        if icon0.size[0] / icon0.size[1] < 1.4 and icon0.size[0] / icon0.size[1] > 0.75:
-            if icon0.size != (176, 176):
-                icon0 = icon0.resize((176, 176), Image.Resampling.LANCZOS)
-            image = Image.new(icon0.mode, (320, 176), (0,0,0)).convert('RGBA')
-            image.putalpha(0)
-            image.paste(icon0, (72,0))
-        else:
-            if icon0.size != (320, 176):
-                image = icon0.resize((320, 176), Image.Resampling.LANCZOS)
-        image.save(f + '/ICON0.PNG', format='PNG')
-        temp_files.append(f + '/ICON0.PNG')
-
-    if pic0:
-        if pic0.size != (1000, 560):
-            pic0 = pic0.resize((1000, 560), Image.Resampling.LANCZOS)
-        pic0.save(f + '/PIC0.PNG', format='PNG')
-        temp_files.append(f + '/PIC0.PNG')
-        
-    if pic0:
-        image = pic0.resize((310, 250), Image.Resampling.LANCZOS)
-        image.save(f + '/PIC2.PNG', format='PNG')
-        temp_files.append(f + '/PIC2.PNG')
-
-    if pic1:
-        image = pic1.resize((1920, 1080), Image.Resampling.LANCZOS)
-        image.save(f + '/PIC1.PNG', format='PNG')
-        temp_files.append(f + '/PIC1.PNG')
-
-    with open(popfe_runtime.resource_path('PS3LOGO.DAT', required=True), 'rb') as i:
-        with open(f + '/PS3LOGO.DAT', 'wb') as o:
-            o.write(i.read())
-            temp_files.append(f + '/PS3LOGO.DAT')
-
-    f = subdir + disc_ids[0] + '/USRDIR'
-    try:
-        os.mkdir(f)
-    except:
-        True
-
-    _cfg = bytes([
-        0x1c, 0x00, 0x00, 0x00, 0x50, 0x53, 0x31, 0x45,
-        0x6d, 0x75, 0x43, 0x6f, 0x6e, 0x66, 0x69, 0x67,
-        0x46, 0x69, 0x6c, 0x65, 0x00, 0xe3, 0xb7, 0xeb,
-        0x04, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00,
-        0xbb, 0xfa, 0xe2, 0x1b, 0x10, 0x00, 0x00, 0x00,
-        0x64, 0x69, 0x73, 0x63, 0x5f, 0x6e, 0x6f, 0x00,
-        0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        0x93, 0xd1, 0x5b, 0xf8
-    ])
-    with open(f + '/CONFIG', 'wb') as o:
-        o.write(_cfg)
-        temp_files.append(f + '/CONFIG')
-
-        
-    f = subdir + disc_ids[0] + '/USRDIR/CONTENT'
-    try:
-        os.mkdir(f)
-    except:
-        True
-
-    if manual:
-        print('Installing manual as', subdir + disc_ids[0] + '/USRDIR/CONTENT/DOCUMENT.DAT')
-        copy_file(manual, subdir + disc_ids[0] + '/USRDIR/CONTENT/DOCUMENT.DAT')
-
-    p.eboot = subdir + disc_ids[0] + '/USRDIR/CONTENT/EBOOT.PBP'
-    p.iso_bin_dat = subdir + disc_ids[0] + '/USRDIR/ISO.BIN.DAT'
-    try:
-        os.unlink(p.iso_bin_dat)
-    except:
-        True
-    print('Create EBOOT.PBP at', p.eboot)
-    p.create_pbp()
-    validation = validate_eboot(p.eboot)
-    if not validation.ok:
-        os.unlink(p.eboot)
-        raise ValueError('generated PS3 EBOOT failed structural validation')
-    temp_files.append(p.eboot)
-    temp_files.append(p.iso_bin_dat)
-    try:
-        os.sync()
-    except:
-        True
-
-    # sign the ISO.BIN.DAT
-    print('Signing', p.iso_bin_dat)
-    subprocess.run(
-        popfe_runtime.tool_command('sign3', p.iso_bin_dat),
-        check=True,
+    configs = _load_ps3_configs(
+        disc_ids,
+        real_disc_ids,
+        real_cue_files,
+        planned_configs,
+        ps1_newemu,
+        enable_swap,
+        force_ntsc,
+    )
+    p = _configure_ps3_popstation(
+        disc_ids,
+        game_title,
+        cue_files,
+        img_files,
+        aea_files,
+        subchannels,
+        configs,
+        magic_word,
+        whole_disk,
     )
 
-    #
-    # USRDIR/SAVEDATA
-    #
-    f = subdir + disc_ids[0] + '/USRDIR/SAVEDATA'
-    try:
-        os.mkdir(f)
-    except:
-        True
-    if icon0:
-        image = icon0.resize((80,80), Image.Resampling.LANCZOS)
-        i = io.BytesIO()
-        image.save(f + '/ICON0.PNG', format='PNG')
-        temp_files.append(f + '/ICON0.PNG')    
-
-    if len(mem_cards) < 1:
-        create_blank_mc(f + '/SCEVMC0.VMP')
-    if len(mem_cards) < 2:
-        create_blank_mc(f + '/SCEVMC1.VMP')
-    idx = 0
-    for mc in mem_cards:
-        mf = f + ('/SCEVMC%d.VMP' % idx)
-        with open(mf, 'wb') as of:
-            print('Installing MemoryCard as', mf)
-            of.write(encode_vmp(mc))
-        idx = idx + 1 
-    temp_files.append(f + '/SCEVMC0.VMP')
-    temp_files.append(f + '/SCEVMC1.VMP')
-
-    sfo = {
-        'CATEGORY': {
-            'data_fmt': 516,
-            'data_max_len': 4,
-            'data': 'MS'},
-        'PARENTAL_LEVEL': {
-            'data_fmt': 1028,
-            'data': 1},
-        'SAVEDATA_DETAIL': {
-            'data_fmt': 516,
-            'data_max_len': 4,
-            'data': ''},
-        'SAVEDATA_DIRECTORY': {
-            'data_fmt': 516,
-            'data_max_len': 4,
-            'data': games[disc_ids[0]]['id']},
-        'SAVEDATA_FILE_LIST': {
-            'data_fmt': 4,
-            'data_max_len': 3168,
-            'data': str(bytes(3168))},
-        'SAVEDATA_TITLE': {
-            'data_fmt': 516,
-            'data_max_len': 128,
-            'data': ''},
-        'TITLE': {
-            'data_fmt': 516,
-            'data_max_len': 128,
-            'data': game_title},
-        'SAVEDATA_PARAMS': {
-            'data_fmt': 4,
-            'data_max_len': 128,
-            'data': str(b"A\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xda\xdaC4\x1br\xc2\xede\xa1/k'D\xc6\x11(\xcf\xc8\xb7(\xb8tG+*f\x85L\nm\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x8a\xfa,\xa1\xe7+mA\xc5m.\x9a\xba\xbct\xb0")}
-    }
-    with open(f + '/PARAM.SFO', 'wb') as of:
-        of.write(GenerateSFO(sfo))
-        temp_files.append(f + '/PARAM.SFO')
-
-    #
-    # Create ISO.BIN.EDAT
-    #
-    print('Create ISO.BIN.EDAT')
-    pack(subdir + '%s/USRDIR/ISO.BIN.DAT' % disc_ids[0],
-         subdir + '%s/USRDIR/ISO.BIN.EDAT' % disc_ids[0],
-         'UP9000-%s_00-0000000000000001' % disc_ids[0])
-    temp_files.append(subdir + '%s/USRDIR/ISO.BIN.EDAT' % disc_ids[0])
-
-    #
-    # Create PS3 PKG
-    #
-    print('Create PKG')
-    subprocess.run(
-        popfe_runtime.tool_command(
-            'pkg',
-            '-c',
-            'UP9000-%s_00-0000000000000001' % disc_ids[0],
-            subdir + disc_ids[0],
-            dest,
-        ),
-        check=True,
+    game_dir, content_dir, savedata_icon = _prepare_ps3_package_tree(
+        disc_ids[0],
+        game_title,
+        resolution,
+        icon0,
+        pic0,
+        pic1,
+        snd0,
+        manual,
+        subdir,
     )
-    temp_files.append(subdir + disc_ids[0] + '/USRDIR/CONTENT')
-    temp_files.append(subdir + disc_ids[0] + '/USRDIR/SAVEDATA')
-    temp_files.append(subdir + disc_ids[0] + '/USRDIR')
-    temp_files.append(subdir + disc_ids[0])
+    _write_ps3_eboot(p, game_dir, content_dir)
+    _write_ps3_savedata(
+        game_dir, disc_ids[0], game_title, savedata_icon, mem_cards
+    )
+    _create_ps3_pkg(dest, game_dir, disc_ids[0])
     print('Finished.', dest, 'created')
     return dest
 
