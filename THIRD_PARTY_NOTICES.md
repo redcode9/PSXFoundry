@@ -1,9 +1,8 @@
 # Third-party software bundled with PSXFoundry
 
-The macOS distribution contains separate helper executables built from the
-sources below.  Exact source revisions, archive checksums, and output names are
-recorded in `packaging/macos/dependencies.lock.json`.  The corresponding build
-instructions are in `packaging/macos/build-helpers.sh`.
+The macOS release includes the helper programs below. Source revisions,
+checksums and output names are in `packaging/macos/dependencies.lock.json`.
+Build steps are in `packaging/macos/build-helpers.sh`.
 
 | Component | Purpose | License | Source |
 | --- | --- | --- | --- |
@@ -29,8 +28,8 @@ wheel into the `licenses/` directory of the applications and disk image.
 
 | Component | Version | License | Source |
 | --- | --- | --- | --- |
-| CPython | 3.12.13 | PSF-2.0 | <https://www.python.org/downloads/release/python-31213/> |
-| Tcl/Tk | 8.6.18 | TCL license | <https://www.tcl-lang.org/software/tcltk/8.6.html> |
+| CPython | 3.12 | PSF-2.0 | <https://www.python.org/> |
+| Tcl/Tk | 8.6 | TCL license | <https://www.tcl-lang.org/> |
 | PyInstaller | 6.22.2 | GPL-2.0-or-later with bootloader exception | <https://pyinstaller.org/> |
 | PyInstaller hooks contrib | 2026.6 | Apache-2.0 and GPL-2.0-only | <https://github.com/pyinstaller/pyinstaller-hooks-contrib> |
 | Pillow | 12.3.0 | MIT-CMU | <https://python-pillow.org/> |
@@ -61,12 +60,10 @@ wheel into the `licenses/` directory of the applications and disk image.
 | urllib3 | 2.7.0 | MIT | <https://github.com/urllib3/urllib3> |
 | yarl | 1.24.5 | Apache-2.0 | <https://github.com/aio-libs/yarl> |
 
-Build-only packages such as PyYAML, altgraph, and macholib are also pinned,
-and their license files are retained by the same collection step.
+Build-only packages such as PyYAML, altgraph and macholib are also pinned. Their
+license files are collected during the build.
 
 PSXFoundry is derived from POP-FE and is distributed under the GNU Lesser
 General Public License 2.1.
-License texts and copyright notices exposed by the pinned Python distributions
-are collected into the release at build time. The exact corresponding source
-code can be obtained from the URLs above and the immutable revisions in the
-dependency lock file.
+License texts and copyright notices from Python packages are collected during
+the build. Source links are listed above and in the dependency lock file.
